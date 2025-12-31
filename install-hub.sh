@@ -18,7 +18,7 @@ fi
 
 # Télécharger le code source
 echo "Downloading source..."
-curl -s -o /tmp/zarch.c https://raw.githubusercontent.com/gopu-inc/lib/main/zarch.c
+curl -s -o /tmp/zarch.c https://raw.githubusercontent.com/gopu-inc/lib/main/zarch-hub.c
 
 # Compiler avec support curl
 echo "Compiling..."
