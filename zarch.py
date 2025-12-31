@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import urllib.request
@@ -9,7 +10,7 @@ import shutil
 # CONFIGURATION POUR iSH (Alpine Linux)
 # ============================================
 HOME = os.path.expanduser("~")
-BIN_DIR = "/usr/local/bin"  # iSH permet l'accès à /usr/local
+BIN_DIR = "/usr/local/bin"
 PKG_DIR = os.path.join(HOME, ".zarch_packages")
 REPO_URL = "https://raw.githubusercontent.com/gopu-inc/lib/main/"
 
@@ -26,6 +27,8 @@ def check_root():
 
 def ensure_directories():
     """Créer les dossiers nécessaires"""
+    global BIN_DIR  # Déclarer global au début de la fonction
+    
     os.makedirs(PKG_DIR, exist_ok=True)
     
     # Vérifier l'accès à /usr/local/bin
@@ -36,7 +39,6 @@ def ensure_directories():
         except:
             print(f"⚠️  Impossible de créer {BIN_DIR}")
             # Fallback vers ~/bin
-            global BIN_DIR
             BIN_DIR = os.path.join(HOME, "bin")
             os.makedirs(BIN_DIR, exist_ok=True)
     
@@ -83,9 +85,9 @@ def get_default_packages():
         "packages": {
             "python3": {
                 "name": "python3",
-                "version": "3.9.0",
+                "version": "3.11.0",
                 "type": "apk",
-                "description": "Python 3.9 (via apk)",
+                "description": "Python 3 avec pip",
                 "install": "apk add python3 py3-pip"
             },
             "wget": {
@@ -97,28 +99,28 @@ def get_default_packages():
             },
             "git": {
                 "name": "git",
-                "version": "2.39.0",
+                "version": "2.40.0",
                 "type": "apk",
                 "description": "Système de contrôle de version",
                 "install": "apk add git"
             },
             "curl": {
                 "name": "curl",
-                "version": "7.88.1",
+                "version": "8.1.0",
                 "type": "apk",
                 "description": "Outil de transfert de données",
                 "install": "apk add curl"
             },
             "nodejs": {
                 "name": "nodejs",
-                "version": "18.14.0",
+                "version": "18.15.0",
                 "type": "apk",
                 "description": "Runtime JavaScript",
                 "install": "apk add nodejs npm"
             },
             "nano": {
                 "name": "nano",
-                "version": "6.4",
+                "version": "7.0",
                 "type": "apk",
                 "description": "Éditeur de texte",
                 "install": "apk add nano"
@@ -139,17 +141,38 @@ def get_default_packages():
             },
             "make": {
                 "name": "make",
-                "version": "4.3",
+                "version": "4.4",
                 "type": "apk",
                 "description": "Outil de compilation",
                 "install": "apk add make"
             },
             "openssh": {
                 "name": "openssh",
-                "version": "9.1",
+                "version": "9.3",
                 "type": "apk",
                 "description": "Client SSH",
                 "install": "apk add openssh-client"
+            },
+            "bash": {
+                "name": "bash",
+                "version": "5.2.15",
+                "type": "apk",
+                "description": "Shell Bash",
+                "install": "apk add bash"
+            },
+            "htop": {
+                "name": "htop",
+                "version": "3.2.2",
+                "type": "apk",
+                "description": "Moniteur système",
+                "install": "apk add htop"
+            },
+            "tmux": {
+                "name": "tmux",
+                "version": "3.3",
+                "type": "apk",
+                "description": "Multiplexeur terminal",
+                "install": "apk add tmux"
             }
         }
     }
@@ -276,7 +299,7 @@ def list_packages():
         print(f"{name:<15} {version:<12} {pkg_type:<8} {desc}")
     
     print("=" * 70)
-    print(f"💡 Installer: python3 {sys.argv[0]} install <nom>")
+    print(f"💡 Installer: zarch install <nom>")
     print(f"💡 Ou directement: apk add <nom>")
 
 def search_packages(keyword):
@@ -305,7 +328,7 @@ def update_system():
     
     if os.geteuid() != 0:
         print("⚠️  Nécessite les droits root")
-        print("💡 Utilisez: sudo python3 zarch.py update")
+        print("💡 Utilisez: sudo zarch update")
         return False
     
     cmds = [
@@ -371,6 +394,29 @@ def show_info(pkg_name):
     else:
         print(f"\n❌ Statut: Non installé")
 
+def show_installed():
+    """Afficher les paquets installés"""
+    print("\n📦 PAQUETS INSTALLÉS:")
+    print("=" * 50)
+    
+    # Vérifier les paquets apk installés
+    print("\n📦 Via APK:")
+    try:
+        result = subprocess.run(["apk", "info"], capture_output=True, text=True)
+        if result.returncode == 0:
+            packages = result.stdout.strip().split('\n')
+            for pkg in sorted(packages):
+                print(f"  • {pkg}")
+    except:
+        print("  ❌ Impossible de lire les paquets APK")
+    
+    # Vérifier les scripts dans BIN_DIR
+    if os.path.exists(BIN_DIR):
+        print(f"\n📁 Scripts dans {BIN_DIR}:")
+        for item in sorted(os.listdir(BIN_DIR)):
+            if os.path.isfile(os.path.join(BIN_DIR, item)):
+                print(f"  • {item}")
+
 def main():
     print("🐧 ZARCH - Gestionnaire de paquets iSH")
     print("=" * 50)
@@ -416,7 +462,6 @@ def main():
         update_system()
     
     elif command == "upgrade":
-        # Alias pour update
         update_system()
     
     elif command == "clean":
@@ -432,35 +477,31 @@ def main():
         print(f"   source ~/.bashrc")
     
     elif command == "installed":
-        print("\n📦 PAQUETS INSTALLÉS (dans PATH):")
-        print("=" * 50)
-        
-        for bin_dir in SYSTEM_BIN_DIRS + [BIN_DIR]:
-            if os.path.exists(bin_dir):
-                print(f"\n📁 {bin_dir}/")
-                try:
-                    files = sorted(os.listdir(bin_dir))
-                    for f in files:
-                        path = os.path.join(bin_dir, f)
-                        if os.path.isfile(path) and os.access(path, os.X_OK):
-                            print(f"  • {f}")
-                except:
-                    pass
+        show_installed()
     
-    else:
-        print("❌ Commande inconnue")
-        print("\n📖 Commandes disponibles:")
+    elif command == "help":
+        print("🐧 ZARCH - Aide")
+        print("=" * 50)
+        print("\nCommandes disponibles:")
         print("  install <pkg...>  - Installer des paquets")
-        print("  list              - Lister les paquets")
+        print("  list              - Lister les paquets disponibles")
         print("  search <term>     - Rechercher un paquet")
         print("  info <pkg>        - Informations détaillées")
         print("  update/upgrade    - Mettre à jour le système")
         print("  clean             - Nettoyer le cache")
         print("  setup             - Configurer l'environnement")
         print("  installed         - Voir les paquets installés")
+        print("  help              - Afficher cette aide")
+        
         print("\n💡 Sur iSH, vous pouvez aussi utiliser:")
-        print("   apk add <paquet>   - Installer directement")
-        print("   apk search <term>  - Rechercher dans apk")
+        print("   apk add <paquet>     - Installer directement")
+        print("   apk search <term>    - Rechercher dans apk")
+        print("   apk info <paquet>    - Infos sur un paquet")
+        print("   apk update && apk upgrade - Mettre à jour")
+    
+    else:
+        print(f"❌ Commande inconnue: {command}")
+        print(f"💡 Utilisez: zarch help")
 
 if __name__ == "__main__":
     main()
