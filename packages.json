@@ -1,0 +1,95 @@
+
+{
+  "packages": {
+    "python": {
+      "name": "python",
+      "version": "3.11.0",
+      "type": "system",
+      "description": "Python programming language",
+      "check": "python3 --version"
+    },
+    "pip": {
+      "name": "pip",
+      "version": "23.0.1",
+      "type": "python",
+      "description": "Python package manager",
+      "urls": [
+        "https://bootstrap.pypa.io/get-pip.py"
+      ],
+      "install": "python3 get-pip.py --user"
+    },
+    "wget": {
+      "name": "wget",
+      "version": "1.21.3",
+      "type": "script",
+      "description": "Network downloader",
+      "urls": [
+        "https://raw.githubusercontent.com/gopu-inc/lib/main/scripts/wget.py"
+      ]
+    },
+    "git": {
+      "name": "git",
+      "version": "2.39.1",
+      "type": "binary",
+      "description": "Distributed version control",
+      "urls": [
+        "https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.39.1.tar.gz"
+      ],
+      "install": "tar -xzf git-2.39.1.tar.gz && cd git-2.39.1 && make configure && ./configure --prefix=$HOME && make install"
+    },
+    "nodejs": {
+      "name": "nodejs",
+      "version": "18.14.0",
+      "type": "binary",
+      "description": "JavaScript runtime",
+      "urls": [
+        "https://nodejs.org/dist/v18.14.0/node-v18.14.0-darwin-arm64.tar.gz"
+      ],
+      "install": "tar -xzf node-v18.14.0-darwin-arm64.tar.gz && cp -r node-v18.14.0-darwin-arm64/bin/* ~/bin/"
+    },
+    "npm": {
+      "name": "npm",
+      "version": "9.3.1",
+      "type": "binary",
+      "description": "Node package manager",
+      "dependencies": ["nodejs"],
+      "install": "echo 'npm est inclus avec nodejs'"
+    },
+    "vim": {
+      "name": "vim",
+      "version": "9.0",
+      "type": "binary",
+      "description": "Text editor",
+      "urls": [
+        "https://github.com/vim/vim/archive/refs/tags/v9.0.0.tar.gz"
+      ]
+    },
+    "htop": {
+      "name": "htop",
+      "version": "3.2.2",
+      "type": "source",
+      "description": "Process viewer",
+      "urls": [
+        "https://github.com/htop-dev/htop/archive/refs/tags/3.2.2.tar.gz"
+      ]
+    },
+    "ffmpeg": {
+      "name": "ffmpeg",
+      "version": "5.1.2",
+      "type": "binary",
+      "description": "Multimedia framework",
+      "urls": [
+        "https://ffmpeg.org/releases/ffmpeg-5.1.2.tar.gz"
+      ]
+    },
+    "sqlite": {
+      "name": "sqlite",
+      "version": "3.40.1",
+      "type": "binary",
+      "description": "SQL database engine",
+      "urls": [
+        "https://www.sqlite.org/2022/sqlite-autoconf-3400100.tar.gz"
+      ]
+    }
+  }
+}
