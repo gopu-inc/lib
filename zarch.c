@@ -410,6 +410,107 @@ void create_lock_file(const PackageConfig *config, const char *output_file) {
 }
 
 // ============================================================================
+// EXTRACT METADATA FROM ARCHIVE
+// ============================================================================
+int extract_metadata_from_archive(const char *archive_path, PackageConfig *config) {
+    // Créer un répertoire temporaire
+    char temp_dir[MAX_PATH];
+    snprintf(temp_dir, sizeof(temp_dir), "/tmp/zarch-extract-%d", getpid());
+    create_directory(temp_dir);
+    
+    // Extraire uniquement le fichier manifeste
+    char cmd[MAX_PATH * 2];
+    snprintf(cmd, sizeof(cmd), "tar -xzf %s .zarch-manifest -C %s 2>/dev/null", 
+             archive_path, temp_dir);
+    
+    int result = system(cmd);
+    if (result != 0) {
+        // Essayer de lire directement depuis l'archive avec tar -t
+        snprintf(cmd, sizeof(cmd), "tar -tzf %s 2>/dev/null | head -20", archive_path);
+        FILE *fp = popen(cmd, "r");
+        if (fp) {
+            char line[MAX_PATH];
+            while (fgets(line, sizeof(line), fp)) {
+                if (strstr(line, ".zarch-manifest")) {
+                    // Extraire le manifeste
+                    snprintf(cmd, sizeof(cmd), "tar -xzf %s .zarch-manifest -C %s 2>/dev/null", 
+                            archive_path, temp_dir);
+                    system(cmd);
+                    break;
+                }
+            }
+            pclose(fp);
+        }
+    }
+    
+    // Lire le fichier manifeste
+    char manifest_path[MAX_PATH];
+    snprintf(manifest_path, sizeof(manifest_path), "%s/.zarch-manifest", temp_dir);
+    
+    if (file_exists(manifest_path)) {
+        FILE *fp = fopen(manifest_path, "r");
+        if (fp) {
+            char line[MAX_LINE];
+            
+            while (fgets(line, sizeof(line), fp)) {
+                line[strcspn(line, "\n")] = 0;
+                
+                if (strstr(line, "Package:") == line) {
+                    strncpy(config->name, line + 9, sizeof(config->name)-1);
+                } else if (strstr(line, "Version:") == line) {
+                    strncpy(config->version, line + 9, sizeof(config->version)-1);
+                } else if (strstr(line, "Author:") == line) {
+                    strncpy(config->author, line + 8, sizeof(config->author)-1);
+                } else if (strstr(line, "License:") == line) {
+                    strncpy(config->license, line + 9, sizeof(config->license)-1);
+                } else if (strstr(line, "Description:") == line) {
+                    strncpy(config->description, line + 13, sizeof(config->description)-1);
+                }
+            }
+            fclose(fp);
+        }
+    } else {
+        // Si pas de manifeste, essayer d'extraire le nom du fichier
+        char *base = strdup(archive_path);
+        char *filename = basename(base);
+        char *dot = strrchr(filename, '.');
+        if (dot) *dot = '\0';
+        
+        // Essayer de parser name-version.zv
+        char *dash = strrchr(filename, '-');
+        if (dash) {
+            *dash = '\0';
+            strncpy(config->name, filename, sizeof(config->name)-1);
+            strncpy(config->version, dash + 1, sizeof(config->version)-1);
+        } else {
+            strncpy(config->name, filename, sizeof(config->name)-1);
+            strcpy(config->version, "1.0.0");
+        }
+        
+        free(base);
+    }
+    
+    // Nettoyer
+    remove_directory(temp_dir);
+    
+    // Valeurs par défaut si manquantes
+    if (strlen(config->name) == 0) {
+        strcpy(config->name, "unknown");
+    }
+    if (strlen(config->version) == 0) {
+        strcpy(config->version, "1.0.0");
+    }
+    if (strlen(config->author) == 0) {
+        strcpy(config->author, "unknown");
+    }
+    if (strlen(config->license) == 0) {
+        strcpy(config->license, "MIT");
+    }
+    
+    return 1;
+}
+
+// ============================================================================
 // CURL UTILITIES AMÉLIORÉES
 // ============================================================================
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
@@ -1209,7 +1310,7 @@ void cmd_build(const char *config_file) {
 }
 
 // ============================================================================
-// COMMAND: PUBLISH (AMÉLIORÉ)
+// COMMAND: PUBLISH (CORRIGÉ)
 // ============================================================================
 void cmd_publish(const char *package_file) {
     UserSession *session = load_session();
@@ -1227,15 +1328,16 @@ void cmd_publish(const char *package_file) {
         return;
     }
     
-    // Lire le fichier lock pour les métadonnées
-    char lock_file[MAX_PATH];
-    char package_name[100] = "unknown";
-    char version[50] = "1.0.0";
-    char description[500] = "";
-    char author[100] = "unknown";
-    char license[50] = "MIT";
+    // Extraire les métadonnées du package
+    PackageConfig config;
+    memset(&config, 0, sizeof(config));
     
-    // Extraire le nom du package du nom de fichier
+    if (!extract_metadata_from_archive(package_file, &config)) {
+        printf("⚠️  Could not extract metadata, using defaults\n");
+    }
+    
+    // Vérifier aussi le fichier lock en parallèle (pour plus de fiabilité)
+    char lock_file[MAX_PATH];
     char *base = strdup(package_file);
     char *ext = strrchr(base, '.');
     if (ext) *ext = '\0';
@@ -1251,11 +1353,11 @@ void cmd_publish(const char *package_file) {
             json_t *auth = json_object_get(lock, "author");
             json_t *lic = json_object_get(lock, "license");
             
-            if (name) strncpy(package_name, json_string_value(name), sizeof(package_name)-1);
-            if (ver) strncpy(version, json_string_value(ver), sizeof(version)-1);
-            if (desc) strncpy(description, json_string_value(desc), sizeof(description)-1);
-            if (auth) strncpy(author, json_string_value(auth), sizeof(author)-1);
-            if (lic) strncpy(license, json_string_value(lic), sizeof(license)-1);
+            if (name) strncpy(config.name, json_string_value(name), sizeof(config.name)-1);
+            if (ver) strncpy(config.version, json_string_value(ver), sizeof(config.version)-1);
+            if (desc) strncpy(config.description, json_string_value(desc), sizeof(config.description)-1);
+            if (auth) strncpy(config.author, json_string_value(auth), sizeof(config.author)-1);
+            if (lic) strncpy(config.license, json_string_value(lic), sizeof(config.license)-1);
             
             json_decref(lock);
         }
@@ -1265,10 +1367,10 @@ void cmd_publish(const char *package_file) {
     
     // Préparer la requête avec curl
     printf("📤 Uploading to Zenv Hub...\n");
-    printf("📦 Package: %s v%s\n", package_name, version);
-    printf("📝 Description: %s\n", description);
-    printf("👤 Author: %s\n", author);
-    printf("⚖️  License: %s\n", license);
+    printf("📦 Package: %s v%s\n", config.name, config.version);
+    printf("📝 Description: %s\n", config.description);
+    printf("👤 Author: %s\n", config.author);
+    printf("⚖️  License: %s\n", config.license);
     
     char curl_cmd[2000];
     snprintf(curl_cmd, sizeof(curl_cmd),
@@ -1281,8 +1383,8 @@ void cmd_publish(const char *package_file) {
             "-F 'author=%s' "
             "-F 'license=%s' "
             "%s/api/packages/upload",
-            session->token, package_file, package_name, version, 
-            description, author, license, HUB_URL);
+            session->token, package_file, config.name, config.version, 
+            config.description, config.author, config.license, HUB_URL);
     
     printf("\n⚙️  Executing upload command...\n");
     FILE *pipe = popen(curl_cmd, "r");
