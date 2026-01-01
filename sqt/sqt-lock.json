@@ -1,0 +1,18 @@
+{
+    "name": "sqt",
+    "version": "1.0.0",
+    "author": "SQLT Team",
+    "license": "MIT",
+    "description": "SQL Toolkit for SQLite databases - Lightweight C library",
+    "output_file": "sqt-1.0.0.zv",
+    "build_date": 1767252080,
+    "sha256": "d76416eb192ba600b2c2946415faa8335acd5158f1cc362b8ee91fb59fc1262d",
+    "files": [
+        "sqt.h",
+        "sqt.c",
+        "example.c",
+        "Makefile",
+        "README",
+        "@za.json"
+    ]
+}

@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""
+Script pour créer un package sqt pour zarch
+"""
+import os
+import tarfile
+import json
+
+# Fichiers à inclure
+files = [
+    "sqt.h",
+    "sqt.c", 
+    "example.c",
+    "Makefile",
+    "README.md",
+    "@za.json"
+]
+
+# Vérifier que tous les fichiers existent
+missing = []
+for f in files:
+    if not os.path.exists(f):
+        missing.append(f)
+
+if missing:
+    print(f"❌ Fichiers manquants: {missing}")
+    exit(1)
+
+# Créer l'archive
+package_name = "sqt-1.0.0.zv"
+print(f"📦 Création du package: {package_name}")
+
+with tarfile.open(package_name, "w:gz") as tar:
+    for file in files:
+        print(f"  + {file}")
+        tar.add(file)
+
+# Vérifier
+print(f"\n✅ Package créé: {package_name}")
+print(f"📦 Taille: {os.path.getsize(package_name)} octets")
+
+# Afficher le contenu
+print("\n📁 Contenu:")
+with tarfile.open(package_name, "r:gz") as tar:
+    for member in tar.getmembers():
+        print(f"  • {member.name}")

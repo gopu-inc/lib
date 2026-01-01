@@ -1,0 +1,30 @@
+{
+    "name": "sqt",
+    "version": "1.0.0",
+    "author": "SQLT Team",
+    "license": "MIT",
+    "description": "SQL Toolkit léger en C pour SQLite - Alternative simple à SQLAlchemy",
+    "build_dir": ".",
+    "output": "sqt-1.0.0.zv",
+    "include": [
+        "sqt.h",
+        "sqt.c", 
+        "example.c",
+        "Makefile",
+        "README.md",
+        "@za.json"
+    ],
+    "exclude": [
+        "*.db",
+        "*.o",
+        "*.so",
+        "*.a",
+        "test_*"
+    ],
+    "dependencies": ["sqlite-dev"],
+    "scripts": {
+        "build": "make",
+        "test": "./example",
+        "install": "sudo make install"
+    }
+}
