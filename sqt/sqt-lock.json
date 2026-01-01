@@ -1,18 +1,29 @@
 {
-    "name": "sqt",
-    "version": "1.0.0",
-    "author": "SQLT Team",
-    "license": "MIT",
-    "description": "SQL Toolkit for SQLite databases - Lightweight C library",
-    "output_file": "sqt-1.0.0.zv",
-    "build_date": 1767252080,
-    "sha256": "d76416eb192ba600b2c2946415faa8335acd5158f1cc362b8ee91fb59fc1262d",
-    "files": [
-        "sqt.h",
-        "sqt.c",
-        "example.c",
-        "Makefile",
-        "README",
-        "@za.json"
-    ]
+  "name": "sqt",
+  "version": "1.1.0",
+  "author": "SQLT Team",
+  "license": "MIT",
+  "description": "SQL Toolkit v1.1.0 - Complete SQLite library with CLI interface",
+  "output_file": "sqt-1.1.0.zv",
+  "build_date": 1767255160,
+  "files": [
+    "libsqt.so",
+    "Makefile",
+    "example.db",
+    "example",
+    "libsqt.a",
+    "sqt-cli",
+    "sqt.o",
+    "sqt.h",
+    "example.c",
+    "@za.json",
+    "test-files.sh",
+    "README.md",
+    "sqt-cli.c",
+    "test.db",
+    "pyt",
+    "sqt.c",
+    ".zarch-manifest"
+  ],
+  "sha256": "71fcdbe95b437099756da0ab6de13720142e68ebc43533071462838e91983461"
 }

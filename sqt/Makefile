@@ -1,65 +1,64 @@
-# Makefile pour SQLT (Alpine Linux)
-CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c99 -fPIC
-LIBS = -lsqlite3
-TARGET = libsqt.a
-SO_TARGET = libsqt.so
-EXAMPLES = example
+# ==========================================
+#   Makefile for SQLT v1.1.0
+# ==========================================
 
-# Fichiers source
-SRCS = sqt.c
-OBJS = $(SRCS:.c=.o)
+# Compilateur et options
+CC      = gcc
+CFLAGS  = -Wall -Wextra -O2 -std=c99
+LIBS    = -lsqlite3
 
-# Cible par défaut
-all: $(TARGET) $(SO_TARGET) $(EXAMPLES)
+# Cibles principales
+TARGETS = libsqt.a example sqt-cli
+
+# ------------------------------------------
+# Règles de construction
+# ------------------------------------------
+
+all: $(TARGETS)
 
 # Bibliothèque statique
-$(TARGET): $(OBJS)
-	ar rcs $@ $(OBJS)
-	@echo "✅ Bibliothèque statique créée: $@"
+libsqt.a: sqt.o
+ar rcs $@ $^
 
-# Bibliothèque dynamique
-$(SO_TARGET): $(OBJS)
-	$(CC) -shared -o $@ $(OBJS) $(LIBS)
-	@echo "✅ Bibliothèque dynamique créée: $@"
+# Exemple d’utilisation
+example: example.c sqt.o
+$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-# Compilation des objets
-%.o: %.c sqt.h
-	$(CC) $(CFLAGS) -c $< -o $@
+# CLI principale
+sqt-cli: sqt-cli.c sqt.o
+$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-# Exemple
-example: example.c $(TARGET)
-	$(CC) $(CFLAGS) -o $@ $< -L. -lsqt $(LIBS)
-	@echo "✅ Exemple compilé: $@"
+# Objet principal
+sqt.o: sqt.c sqt.h
+$(CC) $(CFLAGS) -c $< -o $@
 
+# ------------------------------------------
+# Installation
+# ------------------------------------------
+
+install: all
+cp sqt.h     /usr/local/include/
+cp libsqt.a  /usr/local/lib/
+cp sqt-cli   /usr/local/bin/
+@echo "✅ SQLT v1.1.0 installed"
+
+# ------------------------------------------
 # Nettoyage
+# ------------------------------------------
+
 clean:
-	rm -f $(OBJS) $(TARGET) $(SO_TARGET) $(EXAMPLES) *.db
-	@echo "🧹 Nettoyage terminé"
+rm -f $(TARGETS) *.o *.db
+@echo "🧹 Cleaned"
 
-# Installation système (sans ldconfig)
-install: $(TARGET) $(SO_TARGET)
-	cp sqt.h /usr/local/include/
-	cp $(TARGET) $(SO_TARGET) /usr/local/lib/
-	@echo "📦 SQLT installé dans /usr/local/"
-	@echo "⚠️  Note: ldconfig non exécuté (Alpine Linux)"
+# ------------------------------------------
+# Tests
+# ------------------------------------------
 
-# Installation manuelle pour Alpine
-install-alpine: $(TARGET) $(SO_TARGET)
-	cp sqt.h /usr/include/
-	cp $(TARGET) $(SO_TARGET) /usr/lib/
-	@echo "📦 SQLT installé dans /usr/ (Alpine)"
+test: example sqt-cli
+./example
+./sqt-cli example.db init
 
-# Désinstallation
-uninstall:
-	rm -f /usr/local/include/sqt.h
-	rm -f /usr/local/lib/libsqt.*
-	rm -f /usr/include/sqt.h 2>/dev/null || true
-	rm -f /usr/lib/libsqt.* 2>/dev/null || true
-	@echo "🗑️ SQLT désinstallé"
-
-# Tests rapides
-test: example
-	./example
-
-.PHONY: all clean install install-alpine uninstall test
+# ------------------------------------------
+# Phony targets
+# ------------------------------------------
+.PHONY: all install clean test

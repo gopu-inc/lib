@@ -1,84 +1,62 @@
 /*
- * Exemple d'utilisation de SQLT
+ * SQLT v1.1.0 - Example program
  */
-
 #include "sqt.h"
 #include <stdio.h>
 
 int main() {
-    printf("=== SQLT Example ===\n");
+    printf("=== SQLT v1.1.0 Example ===\n");
     
-    // 1. Connexion
-    sqt_connection_t *conn = sqt_connect("test.db");
+    // Create database
+    sqt_connection_t *conn = sqt_connect("example.db");
     if (!conn) {
-        printf("❌ Erreur de connexion\n");
+        printf("Failed to connect\n");
         return 1;
     }
     
-    // 2. Création de table
-    printf("\n1. Création de table...\n");
-    sqt_execute(conn, 
-        "CREATE TABLE IF NOT EXISTS users ("
-        "id INTEGER PRIMARY KEY, "
-        "name TEXT NOT NULL, "
-        "age INTEGER, "
-        "email TEXT UNIQUE)"
-    );
+    printf("✅ Connected to database\n");
     
-    // 3. Insertion de données
-    printf("\n2. Insertion de données...\n");
+    // Create table
+    sqt_execute(conn,
+        "CREATE TABLE IF NOT EXISTS users ("
+        "id INTEGER PRIMARY KEY,"
+        "name TEXT NOT NULL,"
+        "email TEXT UNIQUE)");
+    
+    printf("📊 Table 'users' created\n");
+    
+    // Insert data
     sqt_begin_transaction(conn);
     
-    sqt_execute(conn, 
-        "INSERT INTO users (name, age, email) VALUES "
-        "('Alice', 25, 'alice@example.com')"
-    );
-    
-    sqt_execute(conn,
-        "INSERT INTO users (name, age, email) VALUES "
-        "('Bob', 30, 'bob@example.com')"
-    );
-    
-    sqt_execute(conn,
-        "INSERT INTO users (name, age, email) VALUES "
-        "('Charlie', 35, 'charlie@example.com')"
-    );
+    sqt_execute(conn, "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')");
+    sqt_execute(conn, "INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')");
+    sqt_execute(conn, "INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')");
     
     sqt_commit_transaction(conn);
     
-    // 4. Requête simple
-    printf("\n3. Requête simple...\n");
-    sqt_result_t *result = sqt_query(conn, 
-        "SELECT id, name, age, email FROM users WHERE age > 26", NULL);
+    printf("📝 3 users inserted\n");
+    
+    // Query data
+    printf("\n🔍 All users:\n");
+    sqt_result_t *result = sqt_query(conn,
+        "SELECT id, name, email FROM users ORDER BY name", NULL);
     
     if (result) {
         sqt_print_result(result);
         sqt_free_result(result);
     }
     
-    // 5. Requête paramétrée
-    printf("\n4. Requête paramétrée...\n");
-    result = sqt_query(conn,
-        "SELECT * FROM users WHERE name LIKE ?", "%b%", NULL);
-    
-    if (result) {
-        sqt_print_result(result);
-        sqt_free_result(result);
-    }
-    
-    // 6. Vérification de table
-    printf("\n5. Vérifications...\n");
-    if (sqt_table_exists(conn, "users")) {
-        printf("✅ Table 'users' existe\n");
-    }
-    
-    // 7. Nettoyage
+    // Cleanup
     sqt_execute(conn, "DELETE FROM users");
-    printf("\n6. Table vidée\n");
+    printf("\n🧹 Table cleared\n");
     
-    // 8. Fermeture
+    // Check table exists
+    if (sqt_table_exists(conn, "users")) {
+        printf("✅ Table verification passed\n");
+    }
+    
     sqt_disconnect(conn);
-    printf("\n✅ Exemple terminé\n");
+    printf("\n🎉 Example completed successfully!\n");
     
     return 0;
 }
