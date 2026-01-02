@@ -1,46 +1,27 @@
+CC = gcc
+CFLAGS = -Wall -O2 -D_DEFAULT_SOURCE
+LIBS = -lcurl -ljansson -lcrypto -lz
+TARGET = zarch
+SOURCES = zarch.c
 
+all: $(TARGET)
 
+$(TARGET): $(SOURCES)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES) $(LIBS)
 
-# ==========================================
-#   Makefile pour zarch
-# ==========================================
-
-# Compilateur et options
-CC      = gcc
-CFLAGS  = -Wall -O2
-LIBS    = -lcurl -ljansson
-
-# Cibles
-TARGET  = zarch
-SRC     = zarch.c
-
-# ------------------------------------------
-# Compilation
-# ------------------------------------------
-
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LIBS)   # LIGNE 21 - indente avec TAB
-
-# ------------------------------------------
-# Nettoyage
-# ------------------------------------------
+install: $(TARGET)
+	sudo cp $(TARGET) /usr/local/bin/
+	sudo chmod +x /usr/local/bin/$(TARGET)
+	mkdir -p ~/.zarch/cache
 
 clean:
 	rm -f $(TARGET)
 
-# ------------------------------------------
-# Installation
-# ------------------------------------------
-
-install: $(TARGET)
-	cp $(TARGET) /usr/local/bin/
-	@echo "✅ zarch installé dans /usr/local/bin"
-
 uninstall:
-	rm -f /usr/local/bin/$(TARGET)
-	@echo "🗑️ zarch désinstallé de /usr/local/bin"
+	sudo rm -f /usr/local/bin/$(TARGET)
+	rm -rf ~/.zarch
 
-# ------------------------------------------
-# Phony targets
-# ------------------------------------------
-.PHONY: clean install uninstall
+test:
+	./$(TARGET) --help
+
+.PHONY: all install clean uninstall test
