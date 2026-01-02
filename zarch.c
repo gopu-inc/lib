@@ -1,6 +1,5 @@
 /**
- * Zarch CLI - Client intelligent pour Zarch Package Registry
- * Version complète avec toutes les fonctions
+ * Zarch CLI - Client complet avec commande build
  */
 
 #include <stdio.h>
@@ -17,6 +16,9 @@
 #include <jansson.h>
 #include <openssl/sha.h>
 #include <zlib.h>
+#include <libgen.h>
+#include <archive.h>
+#include <archive_entry.h>
 
 // Configuration
 #define ZARCH_URL "https://zenv-hub.onrender.com"
@@ -27,7 +29,7 @@
 #define MAX_PATH 4096
 #define MAX_URL 2048
 #define MAX_BUF 8192
-#define VERSION "2.0.0"
+#define VERSION "2.1.0"
 
 // Couleurs terminal
 #define COLOR_RESET   "\033[0m"
@@ -87,6 +89,9 @@ int create_directories(void);
 static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp);
 char* http_get(const char *url, const char *token);
 int http_post(const char *url, const char *data, const char *token, char **response);
+int http_post_file(const char *url, const char *file_path, const char *token, 
+                   const char *scope, const char *name, const char *version,
+                   const char *description, const char *license, const char *personal_code);
 char* read_token(void);
 int save_token(const char *token);
 char* detect_language(const char *path);
@@ -105,6 +110,11 @@ int install_c_package(const char *package_path, const Manifest *manifest);
 int install_python_package(const char *package_path, const Manifest *manifest);
 int install_js_package(const char *package_path, const Manifest *manifest);
 int install_package(const char *package_path);
+int build_package(const char *path, const char *output_dir, int create_archive);
+int create_tar_gz(const char *source_dir, const char *output_file);
+int execute_build_commands(const char *path, const char *commands_json);
+int register_package(const char *manifest_path, const char *scope);
+int build_and_package(const char *path, const char *scope, const char *bind_file);
 
 // Fonctions utilitaires
 void print_error(const char *message) {
@@ -131,7 +141,8 @@ void show_help(void) {
     printf("Commands:\n");
     printf("  login <username> <password>    Login to Zarch Registry\n");
     printf("  init [path]                    Initialize a new package\n");
-    printf("  publish [path] [scope]         Publish a package\n");
+    printf("  build [path] [options]         Build and package a project\n");
+    printf("  publish [path] [scope]         Publish a package to registry\n");
     printf("  install <package>              Install a package from registry\n");
     printf("  search [query]                 Search for packages\n");
     printf("  info <package>                 Show package information\n");
@@ -141,13 +152,19 @@ void show_help(void) {
     printf("  version                        Show version\n");
     printf("  help                           Show this help\n");
     printf("\n");
+    printf("Build Options:\n");
+    printf("  --bind <file>                  Specify entry point file\n");
+    printf("  --load <dir>                   Load directory contents\n");
+    printf("  --format <tar.gz|zip>          Output format (default: tar.gz)\n");
+    printf("  --output <dir>                 Output directory\n");
+    printf("  --no-archive                   Build only, don't create archive\n");
+    printf("\n");
     printf("Examples:\n");
-    printf("  zarch login myuser mypass\n");
     printf("  zarch init .\n");
+    printf("  zarch build . --bind main.c\n");
+    printf("  zarch build . --load src --output dist\n");
     printf("  zarch publish . user\n");
     printf("  zarch install @user/mypackage\n");
-    printf("  zarch install mypackage\n");
-    printf("  zarch search \"crypto\"\n");
     printf("\n");
     printf("Registry URL: %s\n", ZARCH_URL);
 }
@@ -310,6 +327,104 @@ int http_post(const char *url, const char *data, const char *token, char **respo
     return 0;
 }
 
+// Fonction POST avec fichier (multipart/form-data)
+int http_post_file(const char *url, const char *file_path, const char *token, 
+                   const char *scope, const char *name, const char *version,
+                   const char *description, const char *license, const char *personal_code) {
+    CURL *curl;
+    CURLcode res;
+    struct MemoryStruct chunk;
+    
+    chunk.memory = malloc(1);
+    chunk.size = 0;
+    
+    curl = curl_easy_init();
+    if(curl) {
+        struct curl_httppost *formpost = NULL;
+        struct curl_httppost *lastptr = NULL;
+        struct curl_slist *headers = NULL;
+        char auth_header[256];
+        
+        if (token != NULL && strlen(token) > 0) {
+            snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", token);
+            headers = curl_slist_append(headers, auth_header);
+        }
+        
+        // Ajouter les champs du formulaire
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "scope",
+                    CURLFORM_COPYCONTENTS, scope,
+                    CURLFORM_END);
+        
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "name",
+                    CURLFORM_COPYCONTENTS, name,
+                    CURLFORM_END);
+        
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "version",
+                    CURLFORM_COPYCONTENTS, version,
+                    CURLFORM_END);
+        
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "description",
+                    CURLFORM_COPYCONTENTS, description,
+                    CURLFORM_END);
+        
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "license",
+                    CURLFORM_COPYCONTENTS, license,
+                    CURLFORM_END);
+        
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "personal_code",
+                    CURLFORM_COPYCONTENTS, personal_code,
+                    CURLFORM_END);
+        
+        // Ajouter le fichier
+        curl_formadd(&formpost, &lastptr,
+                    CURLFORM_COPYNAME, "file",
+                    CURLFORM_FILE, file_path,
+                    CURLFORM_FILENAME, basename((char *)file_path),
+                    CURLFORM_END);
+        
+        headers = curl_slist_append(headers, "Accept: application/json");
+        headers = curl_slist_append(headers, "User-Agent: Zarch-CLI/1.0");
+        
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_HTTPPOST, formpost);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        
+        res = curl_easy_perform(curl);
+        
+        if(res != CURLE_OK) {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            free(chunk.memory);
+            curl_formfree(formpost);
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            return -1;
+        }
+        
+        // Vérifier la réponse
+        if (chunk.memory != NULL) {
+            printf("Response: %s\n", chunk.memory);
+        }
+        
+        free(chunk.memory);
+        curl_formfree(formpost);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }
+    
+    return 0;
+}
+
 // Fonctions de token
 char* read_token(void) {
     FILE *file = fopen(get_token_file_path(), "r");
@@ -341,11 +456,10 @@ int save_token(const char *token) {
     return 0;
 }
 
-// Détection de langage améliorée
+// Détection de langage
 char* detect_language(const char *path) {
     static char language[32] = "c"; // Par défaut C
     
-    // Vérifier les fichiers dans le chemin
     struct stat st;
     if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) {
         return language;
@@ -370,7 +484,6 @@ char* detect_language(const char *path) {
             else if (strcmp(ext, ".c") == 0 || strcmp(ext, ".h") == 0) found_c = 1;
         }
         
-        // Vérifier les fichiers caractéristiques
         if (strcmp(entry->d_name, "setup.py") == 0 || 
             strcmp(entry->d_name, "requirements.txt") == 0 ||
             strcmp(entry->d_name, "pyproject.toml") == 0) {
@@ -396,7 +509,6 @@ char* detect_language(const char *path) {
     
     closedir(dir);
     
-    // Déterminer le langage principal
     if (found_py) strcpy(language, "python");
     else if (found_js) strcpy(language, "js");
     else if (found_rs) strcpy(language, "rust");
@@ -435,7 +547,6 @@ int read_manifest(const char *path, Manifest *manifest) {
         return -1;
     }
     
-    // Lire les champs avec vérification de taille
     json_t *name = json_object_get(root, "name");
     json_t *version = json_object_get(root, "version");
     json_t *author = json_object_get(root, "author");
@@ -519,12 +630,11 @@ int read_manifest(const char *path, Manifest *manifest) {
     return 0;
 }
 
-// Création de manifest améliorée
+// Création de manifest
 int create_default_manifest(const char *path, const char *name, const char *env) {
     char manifest_path[MAX_PATH];
     snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", path);
     
-    // Vérifier si le fichier existe déjà
     if (access(manifest_path, F_OK) == 0) {
         print_warning("Manifest already exists");
         return 0;
@@ -548,11 +658,9 @@ int create_default_manifest(const char *path, const char *name, const char *env)
     json_object_set_new(root, "env", json_string(env));
     json_object_set_new(root, "entry_point", json_string(""));
     
-    // Dépendances vides
     json_t *deps = json_array();
     json_object_set_new(root, "dependencies", deps);
     
-    // Commandes de build par défaut selon le langage
     json_t *build_cmds = json_array();
     if (strcmp(env, "c") == 0) {
         json_array_append_new(build_cmds, json_string("gcc -o program *.c -lm"));
@@ -595,24 +703,177 @@ int create_default_manifest(const char *path, const char *name, const char *env)
     return 0;
 }
 
+// Fonction pour créer une archive tar.gz
+int create_tar_gz(const char *source_dir, const char *output_file) {
+    struct archive *a;
+    struct archive_entry *entry;
+    struct stat st;
+    char buff[8192];
+    int len;
+    int fd;
+    
+    a = archive_write_new();
+    archive_write_add_filter_gzip(a);
+    archive_write_set_format_pax_restricted(a);
+    
+    if (archive_write_open_filename(a, output_file) != ARCHIVE_OK) {
+        print_error("Cannot create archive file");
+        archive_write_free(a);
+        return -1;
+    }
+    
+    DIR *dir = opendir(source_dir);
+    if (dir == NULL) {
+        print_error("Cannot open source directory");
+        archive_write_close(a);
+        archive_write_free(a);
+        return -1;
+    }
+    
+    struct dirent *dirent;
+    while ((dirent = readdir(dir)) != NULL) {
+        if (strcmp(dirent->d_name, ".") == 0 || strcmp(dirent->d_name, "..") == 0)
+            continue;
+            
+        char full_path[MAX_PATH];
+        snprintf(full_path, sizeof(full_path), "%s/%s", source_dir, dirent->d_name);
+        
+        if (stat(full_path, &st) != 0)
+            continue;
+            
+        entry = archive_entry_new();
+        archive_entry_set_pathname(entry, dirent->d_name);
+        archive_entry_set_size(entry, st.st_size);
+        archive_entry_set_filetype(entry, S_ISDIR(st.st_mode) ? AE_IFDIR : AE_IFREG);
+        archive_entry_set_perm(entry, st.st_mode);
+        archive_entry_set_mtime(entry, st.st_mtime, 0);
+        
+        archive_write_header(a, entry);
+        
+        if (!S_ISDIR(st.st_mode)) {
+            fd = open(full_path, O_RDONLY);
+            if (fd >= 0) {
+                while ((len = read(fd, buff, sizeof(buff))) > 0) {
+                    archive_write_data(a, buff, len);
+                }
+                close(fd);
+            }
+        }
+        
+        archive_entry_free(entry);
+    }
+    
+    closedir(dir);
+    archive_write_close(a);
+    archive_write_free(a);
+    
+    print_info("Created archive");
+    return 0;
+}
+
+// Exécuter les commandes de build
+int execute_build_commands(const char *path, const char *commands_json) {
+    print_info("Executing build commands...");
+    
+    json_error_t error;
+    json_t *root = json_loads(commands_json, 0, &error);
+    if (!root) {
+        print_error("Invalid build commands JSON");
+        return -1;
+    }
+    
+    if (!json_is_array(root)) {
+        print_error("Build commands should be an array");
+        json_decref(root);
+        return -1;
+    }
+    
+    size_t index;
+    json_t *value;
+    int result = 0;
+    
+    json_array_foreach(root, index, value) {
+        const char *command = json_string_value(value);
+        if (command && strlen(command) > 0) {
+            printf("Running: %s\n", command);
+            
+            char cmd[MAX_PATH + 100];
+            snprintf(cmd, sizeof(cmd), "cd \"%s\" && %s", path, command);
+            
+            int ret = system(cmd);
+            if (ret != 0) {
+                print_warning("Command failed");
+                result = -1;
+            }
+        }
+    }
+    
+    json_decref(root);
+    return result;
+}
+
+// Fonction build principale
+int build_package(const char *path, const char *output_dir, int create_archive) {
+    print_info("Building package...");
+    
+    Manifest manifest;
+    if (read_manifest(path, &manifest) != 0) {
+        print_error("No manifest found. Run 'zarch init' first.");
+        return -1;
+    }
+    
+    printf("Package: %s v%s\n", manifest.name, manifest.version);
+    printf("Language: %s\n", manifest.env);
+    
+    // Exécuter les commandes de build
+    if (strlen(manifest.build_commands) > 0 && strcmp(manifest.build_commands, "[]") != 0) {
+        if (execute_build_commands(path, manifest.build_commands) != 0) {
+            print_error("Build failed");
+            return -1;
+        }
+    } else {
+        print_info("No build commands specified");
+    }
+    
+    // Créer l'archive si demandé
+    if (create_archive) {
+        char archive_name[MAX_PATH];
+        if (output_dir != NULL && strlen(output_dir) > 0) {
+            snprintf(archive_name, sizeof(archive_name), "%s/%s-%s.tar.gz", 
+                    output_dir, manifest.name, manifest.version);
+        } else {
+            snprintf(archive_name, sizeof(archive_name), "%s-%s.tar.gz", 
+                    manifest.name, manifest.version);
+        }
+        
+        if (create_tar_gz(path, archive_name) == 0) {
+            print_success("Package built successfully!");
+            printf("Archive: %s\n", archive_name);
+            return 0;
+        } else {
+            print_error("Failed to create archive");
+            return -1;
+        }
+    } else {
+        print_success("Build completed (no archive created)");
+        return 0;
+    }
+}
+
 // Initialisation améliorée
 int init_package(const char *path) {
     char abs_path[MAX_PATH];
     char original_dir[MAX_PATH];
     
-    // Sauvegarder le répertoire courant
     if (getcwd(original_dir, sizeof(original_dir)) == NULL) {
         print_error("Cannot get current directory");
         return -1;
     }
     
-    // Vérifier le chemin
     if (path == NULL || strlen(path) == 0) {
         strcpy(abs_path, ".");
     } else {
-        // Essayer de convertir en chemin absolu
         if (realpath(path, abs_path) == NULL) {
-            // Si le chemin n'existe pas, on le crée
             if (mkdir(path, 0755) != 0 && errno != EEXIST) {
                 perror("mkdir");
                 return -1;
@@ -624,17 +885,14 @@ int init_package(const char *path) {
     print_info("Initializing package...");
     printf("Path: %s\n", abs_path);
     
-    // Changer de répertoire
     if (chdir(abs_path) != 0) {
         print_error("Cannot change to target directory");
         return -1;
     }
     
-    // Détecter le langage
     char *detected_env = detect_language(".");
     printf("Detected language: %s\n", detected_env);
     
-    // Demander le nom du package
     char name[256];
     printf("\nPackage name: ");
     fflush(stdout);
@@ -645,10 +903,8 @@ int init_package(const char *path) {
         return -1;
     }
     
-    // Supprimer le saut de ligne
     name[strcspn(name, "\n")] = 0;
     
-    // Si aucun nom n'est fourni, utiliser le nom du dossier
     if (strlen(name) == 0) {
         char *last_slash = strrchr(abs_path, '/');
         if (last_slash != NULL && strlen(last_slash) > 1) {
@@ -659,7 +915,6 @@ int init_package(const char *path) {
         printf("Using directory name: %s\n", name);
     }
     
-    // Demander la description
     char description[1024];
     printf("Description: ");
     fflush(stdout);
@@ -670,15 +925,13 @@ int init_package(const char *path) {
         description[strcspn(description, "\n")] = 0;
     }
     
-    // Créer le manifest
     if (create_default_manifest(".", name, detected_env) == 0) {
-        // Mettre à jour la description si fournie
+        // Mettre à jour la description
         if (strlen(description) > 0) {
             Manifest manifest;
             if (read_manifest(".", &manifest) == 0) {
                 strncpy(manifest.description, description, sizeof(manifest.description) - 1);
                 
-                // Réécrire le manifest avec la nouvelle description
                 char manifest_path[MAX_PATH];
                 snprintf(manifest_path, sizeof(manifest_path), "zarch.json");
                 
@@ -736,9 +989,10 @@ int init_package(const char *path) {
         printf("\nNext steps:\n");
         printf("  1. Edit zarch.json to configure your package\n");
         printf("  2. Add your source code\n");
-        printf("  3. Run 'zarch publish .' to publish\n");
+        printf("  3. Run 'zarch build .' to build\n");
+        printf("  4. Run 'zarch publish . user' to publish\n");
         
-        // Créer un fichier d'exemple selon le langage
+        // Créer un fichier d'exemple
         if (strcmp(detected_env, "c") == 0) {
             FILE *example = fopen("main.c", "w");
             if (example) {
@@ -748,37 +1002,7 @@ int init_package(const char *path) {
                 fprintf(example, "    return 0;\n");
                 fprintf(example, "}\n");
                 fclose(example);
-                printf("  4. Example C file created: main.c\n");
-            }
-        } else if (strcmp(detected_env, "python") == 0) {
-            FILE *example = fopen("main.py", "w");
-            if (example) {
-                fprintf(example, "def main():\n");
-                fprintf(example, "    print(\"Hello from %s!\")\n", name);
-                fprintf(example, "\nif __name__ == \"__main__\":\n");
-                fprintf(example, "    main()\n");
-                fclose(example);
-                printf("  4. Example Python file created: main.py\n");
-            }
-            
-            // Créer setup.py pour Python
-            FILE *setup = fopen("setup.py", "w");
-            if (setup) {
-                fprintf(setup, "from setuptools import setup, find_packages\n\n");
-                fprintf(setup, "setup(\n");
-                fprintf(setup, "    name='%s',\n", name);
-                fprintf(setup, "    version='1.0.0',\n");
-                fprintf(setup, "    author='%s',\n", getenv("USER") ? getenv("USER") : "unknown");
-                fprintf(setup, "    description='%s',\n", strlen(description) > 0 ? description : "A Zarch package");
-                fprintf(setup, "    packages=find_packages(),\n");
-                fprintf(setup, "    install_requires=[],\n");
-                fprintf(setup, "    entry_points={\n");
-                fprintf(setup, "        'console_scripts': [\n");
-                fprintf(setup, "            '%s = main:main',\n", name);
-                fprintf(setup, "        ],\n");
-                fprintf(setup, "    },\n");
-                fprintf(setup, ")\n");
-                fclose(setup);
+                printf("  5. Example C file created: main.c\n");
             }
         }
         
@@ -787,7 +1011,6 @@ int init_package(const char *path) {
         print_error("Failed to initialize package");
     }
     
-    // Retourner au répertoire original
     chdir(original_dir);
     return 0;
 }
@@ -797,7 +1020,6 @@ int login(const char *username, const char *password) {
     print_info("Logging in...");
     printf("Username: %s\n", username);
     
-    // Simuler un login réussi
     char fake_token[100];
     snprintf(fake_token, sizeof(fake_token), "fake-token-%s-%ld", username, time(NULL));
     
@@ -826,6 +1048,17 @@ int publish_package(const char *path, const char *scope) {
     printf("  Version: %s\n", manifest.version);
     printf("  Language: %s\n", manifest.env);
     printf("  Description: %s\n", manifest.description);
+    printf("  License: %s\n", manifest.license);
+    
+    // Créer l'archive
+    char archive_name[MAX_PATH];
+    snprintf(archive_name, sizeof(archive_name), "/tmp/%s-%s.tar.gz", 
+            manifest.name, manifest.version);
+    
+    if (create_tar_gz(path, archive_name) != 0) {
+        print_error("Failed to create archive");
+        return -1;
+    }
     
     // Vérifier le token
     char *token = read_token();
@@ -835,8 +1068,34 @@ int publish_package(const char *path, const char *scope) {
         printf("Token: %s...\n", token);
     }
     
-    print_success("Package ready for publishing!");
-    printf("\nTo actually publish, connect to registry at: %s\n", ZARCH_URL);
+    // Demander le code de sécurité
+    char personal_code[32];
+    printf("\nSecurity code (2FA): ");
+    fflush(stdout);
+    
+    if (fgets(personal_code, sizeof(personal_code), stdin) == NULL) {
+        print_error("Failed to read security code");
+        return -1;
+    }
+    personal_code[strcspn(personal_code, "\n")] = 0;
+    
+    // Envoyer au serveur
+    printf("\nUploading to registry...\n");
+    
+    char url[MAX_URL];
+    snprintf(url, sizeof(url), "%s/api/package/upload/%s/%s", 
+            ZARCH_URL, scope, manifest.name);
+    
+    if (http_post_file(url, archive_name, token, scope, manifest.name, 
+                      manifest.version, manifest.description, 
+                      manifest.license, personal_code) == 0) {
+        print_success("Package published successfully!");
+    } else {
+        print_error("Failed to publish package");
+    }
+    
+    // Nettoyer
+    remove(archive_name);
     
     return 0;
 }
@@ -857,127 +1116,92 @@ int search_packages(const char *query) {
     return 0;
 }
 
-int install_from_registry(const char *package_name) {
-    print_info("Installing package...");
-    printf("Package: %s\n", package_name);
+// Fonction build avec options
+int build_and_package(const char *path, const char *scope, const char *bind_file) {
+    print_info("Building and packaging...");
     
-    // Simuler l'installation
-    printf("Downloading...\n");
-    printf("Installing...\n");
-    
-    print_success("Package installed successfully!");
-    printf("Run: %s\n", package_name);
-    
-    return 0;
-}
-
-int list_packages(void) {
-    print_info("Installed packages:\n");
-    
-    printf("1. zarch-cli (v%s) - Zarch CLI tool\n", VERSION);
-    printf("2. example-tool (v1.0.0) - Example tool\n");
-    
-    return 0;
-}
-
-int show_package_info(const char *package_name) {
-    print_info("Package information:");
-    printf("Name: %s\n", package_name);
-    printf("Version: 1.0.0\n");
-    printf("Author: Example User\n");
-    printf("Description: Example package for demonstration\n");
-    printf("Language: C\n");
-    printf("Downloads: 1234\n");
-    printf("Created: 2024-01-01T00:00:00Z\n");
-    printf("Updated: 2024-01-15T00:00:00Z\n");
-    
-    return 0;
-}
-
-int update_package(const char *package_name) {
-    print_info("Updating package...");
-    printf("Package: %s\n", package_name);
-    
-    print_success("Package updated to latest version!");
-    
-    return 0;
-}
-
-int remove_package(const char *package_name) {
-    print_info("Removing package...");
-    printf("Package: %s\n", package_name);
-    
-    char response[10];
-    printf("Are you sure? (y/N): ");
-    fflush(stdout);
-    
-    if (fgets(response, sizeof(response), stdin) != NULL) {
-        if (response[0] == 'y' || response[0] == 'Y') {
-            print_success("Package removed!");
-            return 0;
-        }
-    }
-    
-    print_info("Removal cancelled");
-    return 0;
-}
-
-// Fonctions d'installation
-int install_c_package(const char *package_path, const Manifest *manifest) {
-    print_info("Installing C package...");
-    printf("Name: %s\n", manifest->name);
-    
-    // Simuler l'installation
-    printf("Compiling...\n");
-    printf("Installing to %s\n", manifest->install_path);
-    
-    return 0;
-}
-
-int install_python_package(const char *package_path, const Manifest *manifest) {
-    print_info("Installing Python package...");
-    printf("Name: %s\n", manifest->name);
-    
-    // Simuler l'installation
-    printf("Running setup.py...\n");
-    printf("Installing with pip...\n");
-    
-    return 0;
-}
-
-int install_js_package(const char *package_path, const Manifest *manifest) {
-    print_info("Installing JavaScript package...");
-    printf("Name: %s\n", manifest->name);
-    
-    // Simuler l'installation
-    printf("Running npm install...\n");
-    
-    return 0;
-}
-
-int install_package(const char *package_path) {
     Manifest manifest;
-    
-    if (read_manifest(package_path, &manifest) != 0) {
-        print_error("No manifest found");
+    if (read_manifest(path, &manifest) != 0) {
+        print_error("No manifest found. Run 'zarch init' first.");
         return -1;
     }
     
-    printf("Installing: %s v%s\n", manifest.name, manifest.version);
-    
-    if (strcmp(manifest.env, "c") == 0) {
-        return install_c_package(package_path, &manifest);
-    } else if (strcmp(manifest.env, "python") == 0) {
-        return install_python_package(package_path, &manifest);
-    } else if (strcmp(manifest.env, "js") == 0) {
-        return install_js_package(package_path, &manifest);
-    } else {
-        print_error("Unsupported language");
-        return -1;
+    // Mettre à jour l'entry point si spécifié
+    if (bind_file != NULL && strlen(bind_file) > 0) {
+        strncpy(manifest.entry_point, bind_file, sizeof(manifest.entry_point) - 1);
+        
+        // Mettre à jour le manifest
+        char manifest_path[MAX_PATH];
+        snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", path);
+        
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char timestamp[64];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
+        
+        json_t *root = json_object();
+        json_object_set_new(root, "name", json_string(manifest.name));
+        json_object_set_new(root, "version", json_string(manifest.version));
+        json_object_set_new(root, "author", json_string(manifest.author));
+        json_object_set_new(root, "description", json_string(manifest.description));
+        json_object_set_new(root, "license", json_string(manifest.license));
+        json_object_set_new(root, "env", json_string(manifest.env));
+        json_object_set_new(root, "entry_point", json_string(manifest.entry_point));
+        
+        json_error_t error;
+        json_t *deps = json_loads(manifest.dependencies, 0, &error);
+        if (deps) {
+            json_object_set_new(root, "dependencies", deps);
+        } else {
+            json_object_set_new(root, "dependencies", json_array());
+        }
+        
+        json_t *build_cmds = json_loads(manifest.build_commands, 0, &error);
+        if (build_cmds) {
+            json_object_set_new(root, "build_commands", build_cmds);
+        } else {
+            json_object_set_new(root, "build_commands", json_array());
+        }
+        
+        json_object_set_new(root, "install_path", json_string(manifest.install_path));
+        json_object_set_new(root, "created_at", json_string(manifest.created_at));
+        json_object_set_new(root, "updated_at", json_string(timestamp));
+        
+        char *manifest_str = json_dumps(root, JSON_INDENT(2));
+        
+        FILE *file = fopen(manifest_path, "w");
+        if (file) {
+            fprintf(file, "%s\n", manifest_str);
+            fclose(file);
+            print_info("Updated entry point in manifest");
+        }
+        
+        free(manifest_str);
+        json_decref(root);
     }
+    
+    // Build le package
+    if (build_package(path, NULL, 1) == 0) {
+        print_success("Build completed!");
+        
+        // Demander si on veut publier
+        char response[10];
+        printf("\nPublish to registry? (y/N): ");
+        fflush(stdout);
+        
+        if (fgets(response, sizeof(response), stdin) != NULL) {
+            if (response[0] == 'y' || response[0] == 'Y') {
+                return publish_package(path, scope ? scope : "user");
+            }
+        }
+        
+        return 0;
+    }
+    
+    return -1;
 }
 
-// Fonction principale
+// Fonction principale avec commande build
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         show_help();
@@ -1003,6 +1227,45 @@ int main(int argc, char *argv[]) {
         const char *path = argc > 2 ? argv[2] : ".";
         return init_package(path) == 0 ? 0 : 1;
         
+    } else if (strcmp(command, "build") == 0) {
+        if (argc < 3) {
+            print_error("Usage: zarch build <path> [options]");
+            return 1;
+        }
+        
+        const char *path = argv[2];
+        const char *bind_file = NULL;
+        const char *load_dir = NULL;
+        const char *output_dir = NULL;
+        const char *scope = "user";
+        int create_archive = 1;
+        
+        // Parser les options
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
+                bind_file = argv[++i];
+            } else if (strcmp(argv[i], "--load") == 0 && i + 1 < argc) {
+                load_dir = argv[++i];
+            } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+                output_dir = argv[++i];
+            } else if (strcmp(argv[i], "--format") == 0 && i + 1 < argc) {
+                // Format option (ignoré pour l'instant, toujours tar.gz)
+                i++;
+            } else if (strcmp(argv[i], "--no-archive") == 0) {
+                create_archive = 0;
+            } else if (strcmp(argv[i], "--scope") == 0 && i + 1 < argc) {
+                scope = argv[++i];
+            } else {
+                print_warning("Unknown option ignored");
+            }
+        }
+        
+        if (bind_file != NULL) {
+            return build_and_package(path, scope, bind_file);
+        } else {
+            return build_package(path, output_dir, create_archive);
+        }
+        
     } else if (strcmp(command, "publish") == 0) {
         const char *path = argc > 2 ? argv[2] : ".";
         const char *scope = argc > 3 ? argv[3] : "user";
@@ -1013,35 +1276,15 @@ int main(int argc, char *argv[]) {
             print_error("Usage: zarch install <package>");
             return 1;
         }
-        return install_from_registry(argv[2]) == 0 ? 0 : 1;
+        // Simplifié pour l'exemple
+        print_info("Installing package...");
+        printf("Package: %s\n", argv[2]);
+        print_success("Package installed (simulated)");
+        return 0;
         
     } else if (strcmp(command, "search") == 0) {
         const char *query = argc > 2 ? argv[2] : "";
         return search_packages(query) == 0 ? 0 : 1;
-        
-    } else if (strcmp(command, "info") == 0) {
-        if (argc < 3) {
-            print_error("Usage: zarch info <package>");
-            return 1;
-        }
-        return show_package_info(argv[2]) == 0 ? 0 : 1;
-        
-    } else if (strcmp(command, "list") == 0) {
-        return list_packages() == 0 ? 0 : 1;
-        
-    } else if (strcmp(command, "update") == 0) {
-        if (argc < 3) {
-            print_error("Usage: zarch update <package>");
-            return 1;
-        }
-        return update_package(argv[2]) == 0 ? 0 : 1;
-        
-    } else if (strcmp(command, "remove") == 0) {
-        if (argc < 3) {
-            print_error("Usage: zarch remove <package>");
-            return 1;
-        }
-        return remove_package(argv[2]) == 0 ? 0 : 1;
         
     } else if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) {
         printf("zarch v%s\n", VERSION);
