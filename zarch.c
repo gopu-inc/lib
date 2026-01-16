@@ -482,8 +482,8 @@ void parse_args(Args* args) {
         else if (strcmp(args->command, "login") == 0) {
             if (strlen(args->username) == 0) {
                 strncpy(args->username, arg, sizeof(args->username)-1);
-            } else if (strlen(args.password) == 0) {
-                strncpy(args.password, arg, sizeof(args.password)-1);
+            } else if (strlen(args->password) == 0) {
+                strncpy(args->password, arg, sizeof(args->password)-1);
             }
         }
         
@@ -851,10 +851,8 @@ int cmd_init() {
     if (f) {
         fprintf(f, "# %s\n\n", name);
         fprintf(f, "%s\n\n", description);
-        fprintf(f, "## Installation\n\n");
-        fprintf(f, "```bash\nzarch install %s\n```\n\n", name);
-        fprintf(f, "## Utilisation\n\n");
-        fprintf(f, "```swiftvelox\nimport %s\n```\n", name);
+        fprintf(f, "🎯 **Installation :**\n```bash\nzarch install %s\n```\n\n", name);
+        fprintf(f, "🚀 **Utilisation :**\n```swiftvelox\nimport %s\n```\n", name);
         fclose(f);
     }
     
@@ -872,10 +870,10 @@ int cmd_init() {
     }
     
     json_decref(manifest);
-    print_success("Package initialisé avec succès");
+    print_success("✅ Package initialisé avec succès");
     
     if (!g_args.quiet) {
-        printf("\n📁 Structure créée:\n");
+        printf("\n📁 **Structure créée :**\n");
         printf("  📄 zarch.json    - Manifeste du package\n");
         printf("  📄 README.md     - Documentation\n");
         printf("  📄 %s - Fichier principal\n", main_file);
@@ -1015,7 +1013,7 @@ int cmd_publish() {
         if (response) {
             json_t* success = json_object_get(response, "success");
             if (json_is_true(success)) {
-                print_success("Package publié avec succès!");
+                print_success("✅ Package publié avec succès!");
                 
                 if (g_args.json) {
                     json_print_object(response);
@@ -1187,7 +1185,7 @@ int cmd_install() {
     if (system(cmd) != 0) {
         print_error("Échec de l'extraction");
     } else {
-        print_success("Package installé avec succès");
+        print_success("✅ Package installé avec succès");
         
         if (!g_args.quiet) {
             printf("📁 Emplacement: %s\n", install_dir);
@@ -1256,23 +1254,15 @@ int cmd_search() {
             json_t* value;
             int total = json_integer_value(count);
             
-            printf("\n🔍 Résultats pour \"%s\" (%d trouvés):\n\n", g_args.query, total);
+            printf("\n🔍 **Résultats pour \"%s\" (%d trouvés) :**\n\n", g_args.query, total);
             
             json_array_foreach(results, i, value) {
                 const char* name = json_string_value(json_object_get(value, "name"));
-                const char* scope = json_string_value(json_object_get(value, "scope"));
                 const char* version = json_string_value(json_object_get(value, "version"));
                 const char* description = json_string_value(json_object_get(value, "description"));
                 
                 printf("📦 %s%s%s v%s\n", 
-                       COLOR_BOLD,
-                       scope && strcmp(scope, "user") != 0 ? "@" : "",
-                       scope && strcmp(scope, "user") != 0 ? scope : name,
-                       COLOR_RESET);
-                
-                if (scope && strcmp(scope, "user") != 0) {
-                    printf("   Scope: %s/%s\n", scope, name);
-                }
+                       COLOR_BOLD, name, COLOR_RESET, version);
                 
                 printf("   Version: %s\n", version);
                 if (description && strlen(description) > 0) {
@@ -1289,7 +1279,7 @@ int cmd_search() {
             json_t* value;
             int count = 0;
             
-            printf("\n📦 Tous les packages disponibles:\n\n");
+            printf("\n📦 **Tous les packages disponibles :**\n\n");
             
             json_object_foreach(packages, key, value) {
                 const char* version = json_string_value(json_object_get(value, "version"));
@@ -1299,7 +1289,7 @@ int cmd_search() {
                 count++;
             }
             
-            printf("\nTotal: %d packages\n", count);
+            printf("\n**Total :** %d packages\n", count);
         }
     }
     
@@ -1316,7 +1306,7 @@ int cmd_list() {
         snprintf(cmd, sizeof(cmd), "ls -la \"%s/.zarch/packages\"", getenv("HOME"));
     }
     
-    printf("📦 Packages installés:\n\n");
+    printf("📦 **Packages installés :**\n\n");
     system(cmd);
     return 1;
 }
@@ -1362,21 +1352,21 @@ int cmd_info() {
         return 1;
     }
     
-    printf("\n📦 Informations du package:\n\n");
-    printf("  Nom: %s\n", json_string_value(json_object_get(info, "name")));
-    printf("  Scope: %s\n", json_string_value(json_object_get(info, "scope")));
-    printf("  Dernière version: %s\n", json_string_value(json_object_get(info, "latest_version")));
-    printf("  Description: %s\n", json_string_value(json_object_get(info, "description")));
-    printf("  Auteur: %s\n", json_string_value(json_object_get(info, "author")));
-    printf("  License: %s\n", json_string_value(json_object_get(info, "license")));
-    printf("  Taille: %.2f MB\n", (double)json_integer_value(json_object_get(info, "size")) / (1024*1024));
-    printf("  Téléchargements: %d\n", (int)json_integer_value(json_object_get(info, "downloads")));
-    printf("  Créé le: %s\n", json_string_value(json_object_get(info, "created_at")));
-    printf("  Mis à jour: %s\n", json_string_value(json_object_get(info, "updated_at")));
+    printf("\n📦 **Informations du package :**\n\n");
+    printf("  **Nom :** %s\n", json_string_value(json_object_get(info, "name")));
+    printf("  **Scope :** %s\n", json_string_value(json_object_get(info, "scope")));
+    printf("  **Dernière version :** %s\n", json_string_value(json_object_get(info, "latest_version")));
+    printf("  **Description :** %s\n", json_string_value(json_object_get(info, "description")));
+    printf("  **Auteur :** %s\n", json_string_value(json_object_get(info, "author")));
+    printf("  **License :** %s\n", json_string_value(json_object_get(info, "license")));
+    printf("  **Taille :** %.2f MB\n", (double)json_integer_value(json_object_get(info, "size")) / (1024*1024));
+    printf("  **Téléchargements :** %d\n", (int)json_integer_value(json_object_get(info, "downloads")));
+    printf("  **Créé le :** %s\n", json_string_value(json_object_get(info, "created_at")));
+    printf("  **Mis à jour :** %s\n", json_string_value(json_object_get(info, "updated_at")));
     
     json_t* versions = json_object_get(info, "all_versions");
     if (json_is_array(versions)) {
-        printf("  Versions disponibles: ");
+        printf("  **Versions disponibles :** ");
         size_t i;
         json_t* value;
         json_array_foreach(versions, i, value) {
@@ -1402,13 +1392,13 @@ int cmd_config() {
             json_print_object(obj);
             json_decref(obj);
         } else {
-            printf("🔧 Configuration Zarch:\n\n");
-            printf("  Utilisateur: %s\n", g_config.username);
-            printf("  Email: %s\n", g_config.email);
-            printf("  Scope par défaut: %s\n", g_config.default_scope);
-            printf("  URL API: %s\n", g_config.api_url);
-            printf("  Mise à jour auto: %s\n", g_config.auto_update ? "activée" : "désactivée");
-            printf("  Couleurs: %s\n", g_config.color_mode ? "activées" : "désactivées");
+            printf("🔧 **Configuration Zarch :**\n\n");
+            printf("  **Utilisateur :** %s\n", g_config.username);
+            printf("  **Email :** %s\n", g_config.email);
+            printf("  **Scope par défaut :** %s\n", g_config.default_scope);
+            printf("  **URL API :** %s\n", g_config.api_url);
+            printf("  **Mise à jour auto :** %s\n", g_config.auto_update ? "activée" : "désactivée");
+            printf("  **Couleurs :** %s\n", g_config.color_mode ? "activées" : "désactivées");
         }
         return 1;
     }
@@ -1469,16 +1459,16 @@ int cmd_clean() {
     snprintf(cmd, sizeof(cmd), "rm -rf %s/.zarch/cache 2>/dev/null", getenv("HOME"));
     system(cmd);
     
-    print_success("Cache nettoyé");
+    print_success("✅ Cache nettoyé");
     return 1;
 }
 
 // ===== HELP =====
 void show_help() {
     printf(COLOR_BOLD "🐧 Zarch Package Manager v%s\n\n" COLOR_RESET, VERSION);
-    printf("Usage: zarch <command> [options] [arguments]\n\n");
+    printf("**Usage :** zarch <command> [options] [arguments]\n\n");
     
-    printf(COLOR_BOLD "📦 Gestion des packages:\n" COLOR_RESET);
+    printf(COLOR_BOLD "📦 **Gestion des packages :**\n" COLOR_RESET);
     printf("  init [path]              Initialiser un nouveau package\n");
     printf("  build [path]             Construire le package\n");
     printf("  publish [path] [code]    Publier le package\n");
@@ -1489,17 +1479,17 @@ void show_help() {
     printf("  info <package>           Informations sur un package\n");
     printf("  update                   Mettre à jour l'index\n");
     
-    printf(COLOR_BOLD "\n🔐 Authentification:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n🔐 **Authentification :**\n" COLOR_RESET);
     printf("  login [user] [pass]      Se connecter\n");
     printf("  logout                   Se déconnecter\n");
     printf("  whoami                   Afficher l'utilisateur courant\n");
     
-    printf(COLOR_BOLD "\n⚙️  Configuration:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n⚙️  **Configuration :**\n" COLOR_RESET);
     printf("  config list              Lister la configuration\n");
     printf("  config set <key> <value> Définir une option\n");
     printf("  clean                    Nettoyer les caches\n");
     
-    printf(COLOR_BOLD "\n🛠️  Options générales:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n🛠️  **Options générales :**\n" COLOR_RESET);
     printf("  -h, --help               Afficher cette aide\n");
     printf("  -v, --version            Afficher la version\n");
     printf("  -V, --verbose            Mode verbeux\n");
@@ -1509,25 +1499,25 @@ void show_help() {
     printf("  -y, --yes                Répondre oui à tout\n");
     printf("  -i, --interactive        Mode interactif\n");
     
-    printf(COLOR_BOLD "\n📁 Options de chemin:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n📁 **Options de chemin :**\n" COLOR_RESET);
     printf("  --path=<path>            Chemin du package\n");
     printf("  --scope=<scope>          Scope du package\n");
     printf("  --version=<version>      Version spécifique\n");
     
-    printf(COLOR_BOLD "\n🎯 Options d'installation:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n🎯 **Options d'installation :**\n" COLOR_RESET);
     printf("  -g, --global             Installation globale\n");
     printf("  -l, --local              Installation locale\n");
     printf("  --no-cache               Désactiver le cache\n");
     
-    printf(COLOR_BOLD "\n📤 Options de publication:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n📤 **Options de publication :**\n" COLOR_RESET);
     printf("  --auto-version           Auto-incrémenter la version\n");
     printf("  --tag=<tag>              Tag de version\n");
     
-    printf(COLOR_BOLD "\n🔍 Options de recherche:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n🔍 **Options de recherche :**\n" COLOR_RESET);
     printf("  --all                    Tout afficher\n");
     printf("  --output=<format>        Format de sortie\n");
     
-    printf(COLOR_BOLD "\n📚 Exemples:\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n📚 **Exemples :**\n" COLOR_RESET);
     printf("  zarch init --interactive\n");
     printf("  zarch publish . 1234 --auto-version\n");
     printf("  zarch install @org/math --global\n");
@@ -1536,7 +1526,7 @@ void show_help() {
     printf("  zarch config set default_scope myorg\n");
     printf("  zarch config set color_mode false\n");
     
-    printf(COLOR_BOLD "\n🌐 Registre: %s\n" COLOR_RESET, REGISTRY_URL);
+    printf(COLOR_BOLD "\n🌐 **Registre :** %s\n" COLOR_RESET, REGISTRY_URL);
 }
 
 void show_version() {
@@ -1600,7 +1590,7 @@ int main(int argc, char** argv) {
         char cmd[1024];
         snprintf(cmd, sizeof(cmd), "rm -rf \"%s/%s\"", LIB_PATH, g_args.package_name);
         system(cmd);
-        print_success("Package désinstallé");
+        print_success("✅ Package désinstallé");
         result = 1;
     } else if (strcmp(g_args.command, "search") == 0) {
         result = cmd_search();
