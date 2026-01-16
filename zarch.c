@@ -1,1186 +1,1601 @@
 /*
- * Zarch Package Manager - Version améliorée
- * Gestionnaire CLI pour les paquets .svlib (SwiftVelox)
- * Compilation: gcc -o zarch zarch.c -lcurl -ljansson -lz -lcrypto
+ * Zarch CLI v6.0 - Ultimate Edition
+ * CLI complet avec jq, couleurs, autocomplétion, et nombreuses fonctionnalités
  */
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-#include <time.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <limits.h>
-
-/* Librairies externes */
 #include <curl/curl.h>
 #include <jansson.h>
-#include <zlib.h>
-#include <openssl/sha.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <time.h>
+#include <ctype.h>
+#include <errno.h>
+#include <dirent.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <pwd.h>
+#include <grp.h>
+#include <signal.h>
+#include <libgen.h>
 
-/* ============================================================================
- * CONFIGURATION ET DÉFINITIONS
- * ============================================================================ */
-
-#define VERSION "3.0.0"
-#define USER_AGENT "Zarch-CLI/" VERSION
+#define VERSION "6.0.0"
+#define REGISTRY_URL "https://zenv-hub.onrender.com"
 #define CONFIG_DIR ".zarch"
-#define CACHE_DIR ".zarch/cache"
-#define CACHE_EXPIRE_SEC (3600 * 24) /* 24h */
+#define CONFIG_FILE "config.json"
+#define CACHE_FILE "cache.json"
+#define LIB_PATH "/usr/local/bin/swiftvelox/addws"
+#define HISTORY_FILE ".zarch_history"
+#define TEMPLATES_DIR "templates"
 
 #define COLOR_RESET   "\033[0m"
-#define COLOR_RED     "\033[1;31m"
-#define COLOR_GREEN   "\033[1;32m"
-#define COLOR_YELLOW  "\033[1;33m"
-#define COLOR_BLUE    "\033[1;34m"
-#define COLOR_MAGENTA "\033[1;35m"
-#define COLOR_CYAN    "\033[1;36m"
+#define COLOR_BOLD    "\033[1m"
+#define COLOR_RED     "\033[31m"
+#define COLOR_GREEN   "\033[32m"
+#define COLOR_YELLOW  "\033[33m"
+#define COLOR_BLUE    "\033[34m"
+#define COLOR_MAGENTA "\033[35m"
+#define COLOR_CYAN    "\033[36m"
+#define COLOR_GRAY    "\033[90m"
 
-#define ICON_SUCCESS "✅"
-#define ICON_ERROR   "❌"
-#define ICON_WARN    "⚠️"
-#define ICON_INFO    "ℹ️"
-#define ICON_DOWNLOAD "⬇️"
-#define ICON_EXTRACT  "📦"
+// ===== STRUCTURES =====
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
 
-/* Types de paquets supportés */
-typedef enum {
-    PKG_TYPE_SVLIB,
-    PKG_TYPE_ZARCH,
-    PKG_TYPE_UNKNOWN
-} PackageType;
-
-/* Structure de configuration utilisateur */
 typedef struct {
     char token[256];
     char username[64];
     char email[128];
-    char server_url[256];
     char personal_code[16];
+    char default_scope[64];
+    char api_url[256];
     time_t last_update;
-    int use_cache;
+    int auto_update;
+    int color_mode;
     int verbose;
-} UserConfig;
+} Config;
 
-/* Structure pour le téléchargement */
 typedef struct {
-    char *data;
-    size_t size;
-    size_t capacity;
-    int http_status;
-} DownloadBuffer;
+    int argc;
+    char **argv;
+    char command[32];
+    char subcommand[32];
+    char package_name[256];
+    char version[32];
+    char scope[64];
+    char path[512];
+    char username[64];
+    char password[64];
+    char personal_code[32];
+    char tag[32];
+    char query[256];
+    char output_format[16];
+    int force;
+    int verbose;
+    int quiet;
+    int json;
+    int no_cache;
+    int auto_version;
+    int help;
+    int version_flag;
+    int interactive;
+    int list;
+    int all;
+    int global;
+    int local;
+    int yes;
+} Args;
 
-/* Structure d'un paquet */
 typedef struct {
     char name[128];
     char scope[64];
     char version[32];
-    char author[128];
     char description[256];
+    char author[64];
     char license[32];
     char sha256[65];
-    char signature[129];
-    time_t created_at;
-    time_t updated_at;
-    long download_count;
-    PackageType type;
-    int swiftvelox_compatible;
+    long size;
+    int downloads;
+    char created_at[32];
+    char updated_at[32];
 } PackageInfo;
 
-/* ============================================================================
- * FONCTIONS UTILITAIRES (LOGGING, CONFIG, FICHIERS)
- * ============================================================================ */
+// ===== GLOBALS =====
+Config g_config;
+Args g_args;
+int g_color_enabled = 1;
 
-void log_error(const char *format, ...) {
+// ===== UTILITAIRES AVANCÉS =====
+void print_color(const char* color, const char* icon, const char* format, ...) {
+    if (!g_color_enabled) color = "";
+    
     va_list args;
-    fprintf(stderr, COLOR_RED ICON_ERROR " ");
     va_start(args, format);
-    vfprintf(stderr, format, args);
-    va_end(args);
-    fprintf(stderr, COLOR_RESET "\n");
-}
-
-void log_success(const char *format, ...) {
-    va_list args;
-    printf(COLOR_GREEN ICON_SUCCESS " ");
-    va_start(args, format);
+    
+    if (icon) printf("%s%s ", color, icon);
     vprintf(format, args);
-    va_end(args);
     printf(COLOR_RESET "\n");
+    
+    va_end(args);
 }
 
-void log_info(const char *format, ...) {
-    va_list args;
-    printf(COLOR_CYAN ICON_INFO " ");
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-    printf(COLOR_RESET "\n");
+void print_step(const char* msg) {
+    print_color(COLOR_BLUE, "🔄", "%s", msg);
 }
 
-void log_debug(const char *format, ...) {
-    if (getenv("ZARCH_DEBUG")) {
-        va_list args;
-        printf(COLOR_MAGENTA "[DEBUG] ");
-        va_start(args, format);
-        vprintf(format, args);
-        va_end(args);
-        printf(COLOR_RESET "\n");
+void print_success(const char* msg) {
+    print_color(COLOR_GREEN, "✅", "%s", msg);
+}
+
+void print_error(const char* msg) {
+    print_color(COLOR_RED, "❌", "%s", msg);
+}
+
+void print_warning(const char* msg) {
+    print_color(COLOR_YELLOW, "⚠️", "%s", msg);
+}
+
+void print_info(const char* msg) {
+    print_color(COLOR_CYAN, "ℹ️", "%s", msg);
+}
+
+void print_debug(const char* msg) {
+    if (g_args.verbose) {
+        print_color(COLOR_GRAY, "🐛", "%s", msg);
     }
 }
 
-/* Obtient le chemin du fichier de config */
-char* get_config_path(char *buffer, size_t size, const char *filename) {
-    const char *home = getenv("HOME");
+char* get_config_path(const char* filename) {
+    static char path[1024];
+    const char* home = getenv("HOME");
     if (!home) home = "/tmp";
-    snprintf(buffer, size, "%s/%s/%s", home, CONFIG_DIR, filename);
-    return buffer;
+    snprintf(path, sizeof(path), "%s/%s/%s", home, CONFIG_DIR, filename);
+    return path;
 }
 
-/* Crée les répertoires de config si nécessaire */
-int ensure_config_dirs(void) {
-    char config_dir[PATH_MAX];
-    char cache_dir[PATH_MAX];
-    
-    get_config_path(config_dir, sizeof(config_dir), "");
-    get_config_path(cache_dir, sizeof(cache_dir), "cache");
-    
-    if (mkdir(config_dir, 0700) && errno != EEXIST) {
-        log_error("Impossible de créer %s: %s", config_dir, strerror(errno));
-        return 0;
-    }
-    
-    if (mkdir(cache_dir, 0700) && errno != EEXIST) {
-        log_error("Impossible de créer %s: %s", cache_dir, strerror(errno));
-        return 0;
-    }
-    
-    return 1;
+int ensure_config_dir() {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s", getenv("HOME"), CONFIG_DIR);
+    return mkdir(path, 0755) == 0 || errno == EEXIST;
 }
 
-/* Charge la configuration utilisateur */
-int load_config(UserConfig *config) {
-    char config_path[PATH_MAX];
-    FILE *fp;
-    json_t *root;
-    json_error_t error;
-    
-    get_config_path(config_path, sizeof(config_path), "config.json");
-    
-    if (!(fp = fopen(config_path, "r"))) {
-        return 0;
-    }
-    
-    root = json_loadf(fp, 0, &error);
-    fclose(fp);
-    
-    if (!root) {
-        log_debug("Erreur JSON ligne %d: %s", error.line, error.text);
-        return 0;
-    }
-    
-    /* Extraction des champs avec valeurs par défaut */
-    const char *token = json_string_value(json_object_get(root, "token"));
-    const char *username = json_string_value(json_object_get(root, "username"));
-    const char *email = json_string_value(json_object_get(root, "email"));
-    const char *server = json_string_value(json_object_get(root, "server_url"));
-    const char *code = json_string_value(json_object_get(root, "personal_code"));
-    
-    if (token) strncpy(config->token, token, sizeof(config->token)-1);
-    if (username) strncpy(config->username, username, sizeof(config->username)-1);
-    if (email) strncpy(config->email, email, sizeof(config->email)-1);
-    if (code) strncpy(config->personal_code, code, sizeof(config->personal_code)-1);
-    
-    strncpy(config->server_url, 
-            server ? server : "https://zenv-hub.onrender.com",
-            sizeof(config->server_url)-1);
-    
-    config->last_update = json_integer_value(json_object_get(root, "last_update"));
-    config->use_cache = json_is_true(json_object_get(root, "use_cache"));
-    config->verbose = json_is_true(json_object_get(root, "verbose"));
-    
-    json_decref(root);
-    return 1;
+int file_exists(const char* path) {
+    return access(path, F_OK) == 0;
 }
 
-/* Sauvegarde la configuration */
-int save_config(const UserConfig *config) {
-    char config_path[PATH_MAX];
-    FILE *fp;
-    json_t *root;
-    
-    if (!ensure_config_dirs()) {
-        return 0;
-    }
-    
-    get_config_path(config_path, sizeof(config_path), "config.json");
-    
-    root = json_object();
-    json_object_set_new(root, "token", json_string(config->token));
-    json_object_set_new(root, "username", json_string(config->username));
-    json_object_set_new(root, "email", json_string(config->email));
-    json_object_set_new(root, "server_url", json_string(config->server_url));
-    json_object_set_new(root, "personal_code", json_string(config->personal_code));
-    json_object_set_new(root, "last_update", json_integer(time(NULL)));
-    json_object_set_new(root, "use_cache", json_boolean(config->use_cache));
-    json_object_set_new(root, "verbose", json_boolean(config->verbose));
-    
-    if (!(fp = fopen(config_path, "w"))) {
-        json_decref(root);
-        log_error("Impossible d'écrire %s: %s", config_path, strerror(errno));
-        return 0;
-    }
-    
-    json_dumpf(root, fp, JSON_INDENT(2));
-    fclose(fp);
-    json_decref(root);
-    
-    return 1;
+int is_directory(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-/* Vérifie si un fichier existe et est lisible */
-int file_exists(const char *path) {
-    return access(path, R_OK) == 0;
+void create_directory(const char* path) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\"", path);
+    system(cmd);
 }
 
-/* Calcule le SHA256 d'un buffer */
-void compute_sha256(const unsigned char *data, size_t len, char *output) {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, data, len);
-    SHA256_Final(hash, &sha256);
-    
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        sprintf(output + (i * 2), "%02x", hash[i]);
+// ===== JSON OUTPUT WITH JQ =====
+void json_print_raw(const char* json_str) {
+    if (g_args.json) {
+        printf("%s\n", json_str);
+        return;
     }
-    output[64] = '\0';
+    
+    // Use jq for pretty printing if available
+    FILE *jq = popen("jq . 2>/dev/null || cat", "w");
+    if (jq) {
+        fprintf(jq, "%s", json_str);
+        pclose(jq);
+    } else {
+        printf("%s\n", json_str);
+    }
 }
 
-/* ============================================================================
- * GESTION DU TÉLÉCHARGEMENT (CURL)
- * ============================================================================ */
+void json_print_object(json_t* obj) {
+    char* json_str = json_dumps(obj, JSON_INDENT(2) | JSON_PRESERVE_ORDER);
+    json_print_raw(json_str);
+    free(json_str);
+}
 
-/* Callback pour écrire les données téléchargées */
-static size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
-    DownloadBuffer *buffer = (DownloadBuffer *)userdata;
+// ===== CURL WRAPPER =====
+size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
     
-    /* Vérifie si on a besoin de plus de mémoire */
-    if (buffer->size + realsize + 1 > buffer->capacity) {
-        size_t new_capacity = buffer->capacity * 2;
-        if (new_capacity < buffer->size + realsize + 1) {
-            new_capacity = buffer->size + realsize + 1;
-        }
-        
-        char *new_data = realloc(buffer->data, new_capacity);
-        if (!new_data) {
-            log_error("Échec d'allocation mémoire pendant le téléchargement");
-            return 0;
-        }
-        
-        buffer->data = new_data;
-        buffer->capacity = new_capacity;
-    }
+    if (!ptr) return 0;
     
-    /* Copie les données */
-    memcpy(buffer->data + buffer->size, ptr, realsize);
-    buffer->size += realsize;
-    buffer->data[buffer->size] = '\0';
-    
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
     return realsize;
 }
 
-/* Callback pour les headers (récupère le status HTTP) */
-static size_t header_callback(char *buffer, size_t size, size_t nitems, void *userdata) {
-    DownloadBuffer *dl = (DownloadBuffer *)userdata;
-    size_t realsize = size * nitems;
+json_t* api_request(const char* url, const char* method, const char* data, int* http_code) {
+    CURL *curl = curl_easy_init();
+    if (!curl) return NULL;
     
-    /* Cherche le status HTTP */
-    if (strncmp(buffer, "HTTP/", 5) == 0) {
-        sscanf(buffer, "HTTP/%*d.%*d %d", &dl->http_status);
-    }
+    struct MemoryStruct chunk = {malloc(1), 0};
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "Content-Type: application/json");
     
-    return realsize;
-}
-
-/* Télécharge une URL avec gestion d'erreurs améliorée */
-DownloadBuffer* download_url(const char *url, const char *token, int timeout) {
-    CURL *curl;
-    CURLcode res;
-    DownloadBuffer *buffer;
-    
-    if (!(curl = curl_easy_init())) {
-        log_error("Impossible d'initialiser cURL");
-        return NULL;
-    }
-    
-    /* Initialise le buffer de téléchargement */
-    buffer = calloc(1, sizeof(DownloadBuffer));
-    if (!buffer) {
-        curl_easy_cleanup(curl);
-        return NULL;
-    }
-    
-    buffer->capacity = 4096;
-    buffer->data = malloc(buffer->capacity);
-    if (!buffer->data) {
-        free(buffer);
-        curl_easy_cleanup(curl);
-        return NULL;
-    }
-    
-    /* Configuration cURL */
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, buffer);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    
-    /* Ajoute le token si fourni */
-    if (token && token[0]) {
-        struct curl_slist *headers = NULL;
-        char auth_header[256];
-        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", token);
+    if (strlen(g_config.token) > 0) {
+        char auth_header[512];
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", g_config.token);
         headers = curl_slist_append(headers, auth_header);
-        headers = curl_slist_append(headers, "Accept: application/json");
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        buffer->http_status = 0; /* Sera mis à jour par le callback */
     }
     
-    log_debug("Téléchargement de %s", url);
-    res = curl_easy_perform(curl);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Zarch-CLI/6.0.0");
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     
-    if (res != CURLE_OK) {
-        log_error("Échec du téléchargement: %s", curl_easy_strerror(res));
-        free(buffer->data);
-        free(buffer);
-        buffer = NULL;
-    } else if (buffer->http_status >= 400) {
-        log_error("Erreur HTTP %d", buffer->http_status);
-        free(buffer->data);
-        free(buffer);
-        buffer = NULL;
+    if (strcmp(method, "POST") == 0) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        if (data) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+    } else if (strcmp(method, "PUT") == 0) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+        if (data) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+    } else if (strcmp(method, "DELETE") == 0) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    }
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    if (http_code) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, http_code);
+    }
+    
+    json_t* result = NULL;
+    if (res == CURLE_OK && chunk.size > 0) {
+        result = json_loads(chunk.memory, 0, NULL);
     }
     
     curl_easy_cleanup(curl);
-    return buffer;
+    curl_slist_free_all(headers);
+    free(chunk.memory);
+    
+    return result;
 }
 
-/* Libère un buffer de téléchargement */
-void download_buffer_free(DownloadBuffer *buffer) {
-    if (buffer) {
-        free(buffer->data);
-        free(buffer);
-    }
-}
-
-/* ============================================================================
- * TRAITEMENT DES PAQUETS .svlib
- * ============================================================================ */
-
-/* Valide la structure d'un package .svlib */
-int validate_svlib_structure(const char *archive_path, PackageInfo *info) {
-    char command[1024];
-    char temp_dir[PATH_MAX];
-    char manifest_path[PATH_MAX];
-    FILE *fp;
-    json_t *root;
-    json_error_t error;
+// ===== CONFIG MANAGEMENT =====
+int load_config() {
+    char* config_path = get_config_path(CONFIG_FILE);
     
-    /* Crée un répertoire temporaire */
-    snprintf(temp_dir, sizeof(temp_dir), "/tmp/zarch_%ld", (long)getpid());
-    if (mkdir(temp_dir, 0700) && errno != EEXIST) {
-        log_error("Impossible de créer le répertoire temporaire");
+    if (!file_exists(config_path)) {
+        memset(&g_config, 0, sizeof(Config));
+        strcpy(g_config.api_url, REGISTRY_URL);
+        g_config.color_mode = 1;
         return 0;
     }
     
-    /* Extrait l'archive */
-    snprintf(command, sizeof(command),
-             "tar -xzf \"%s\" -C \"%s\" 2>/dev/null",
-             archive_path, temp_dir);
+    FILE* f = fopen(config_path, "r");
+    if (!f) return 0;
     
-    if (system(command) != 0) {
-        log_error("Archive invalide ou corrompue");
-        return 0;
-    }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
     
-    /* Vérifie la présence des fichiers requis */
-    snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", temp_dir);
-    if (!file_exists(manifest_path)) {
-        log_error("Fichier zarch.json manquant");
-        return 0;
-    }
-    
-    /* Lit et valide le manifeste */
-    if (!(fp = fopen(manifest_path, "r"))) {
-        log_error("Impossible de lire zarch.json");
-        return 0;
-    }
-    
-    root = json_loadf(fp, 0, &error);
-    fclose(fp);
-    
-    if (!root) {
-        log_error("zarch.json invalide (ligne %d): %s", error.line, error.text);
-        return 0;
-    }
-    
-    /* Récupère les champs obligatoires */
-    const char *name = json_string_value(json_object_get(root, "name"));
-    const char *version = json_string_value(json_object_get(root, "version"));
-    const char *scope = json_string_value(json_object_get(root, "scope"));
-    const char *author = json_string_value(json_object_get(root, "author"));
-    
-    if (!name || !version) {
-        log_error("Champs 'name' ou 'version' manquants dans zarch.json");
-        json_decref(root);
-        return 0;
-    }
-    
-    /* Remplit la structure d'information */
-    strncpy(info->name, name, sizeof(info->name)-1);
-    strncpy(info->version, version, sizeof(info->version)-1);
-    strncpy(info->scope, scope ? scope : "user", sizeof(info->scope)-1);
-    if (author) strncpy(info->author, author, sizeof(info->author)-1);
-    
-    /* Champs optionnels */
-    const char *desc = json_string_value(json_object_get(root, "description"));
-    const char *license = json_string_value(json_object_get(root, "license"));
-    
-    if (desc) strncpy(info->description, desc, sizeof(info->description)-1);
-    if (license) strncpy(info->license, license, sizeof(info->license)-1);
-    else strcpy(info->license, "MIT");
-    
-    info->swiftvelox_compatible = json_is_true(
-        json_object_get(root, "swiftvelox_compatible"));
-    
-    /* Vérifie la présence du répertoire src/ */
-    char src_dir[PATH_MAX];
-    snprintf(src_dir, sizeof(src_dir), "%s/src", temp_dir);
-    DIR *dir = opendir(src_dir);
-    if (!dir) {
-        log_warn("Répertoire 'src/' manquant (package peut-être vide)");
-    } else {
-        closedir(dir);
-    }
-    
-    /* Nettoie le répertoire temporaire */
-    snprintf(command, sizeof(command), "rm -rf \"%s\"", temp_dir);
-    system(command);
-    
-    json_decref(root);
-    return 1;
-}
-
-/* Traite un package Zarch (Base85 + zlib) */
-int process_zarch_package(const char *zarch_content, size_t content_len,
-                         const char *output_dir, PackageInfo *info) {
-    log_info("Traitement du paquet Zarch...");
-    
-    /* Tentative de parsing JSON */
-    json_t *root = json_loadb(zarch_content, content_len, 0, NULL);
-    const char *encoded_data = NULL;
-    
-    if (root) {
-        encoded_data = json_string_value(json_object_get(root, "content"));
-        if (!encoded_data) {
-            encoded_data = zarch_content;
-        }
-    } else {
-        encoded_data = zarch_content;
-    }
-    
-    /* Décodage Base85 simplifié */
-    size_t decoded_len = (strlen(encoded_data) * 4) / 5;
-    unsigned char *decoded = malloc(decoded_len + 1);
-    if (!decoded) {
-        log_error("Échec d'allocation pour le décodage");
-        if (root) json_decref(root);
-        return 0;
-    }
-    
-    /* Note: Implémentation complète du décodage Base85 nécessaire */
-    log_warn("Décodage Base85 simplifié - implémentation complète requise");
-    
-    /* Décompression zlib */
-    z_stream stream;
-    memset(&stream, 0, sizeof(stream));
-    
-    if (inflateInit(&stream) != Z_OK) {
-        log_error("Échec d'initialisation zlib");
-        free(decoded);
-        if (root) json_decref(root);
-        return 0;
-    }
-    
-    size_t decompressed_len = decoded_len * 5; /* Estimation */
-    unsigned char *decompressed = malloc(decompressed_len);
-    
-    stream.next_in = decoded;
-    stream.avail_in = decoded_len;
-    stream.next_out = decompressed;
-    stream.avail_out = decompressed_len;
-    
-    int ret = inflate(&stream, Z_FINISH);
-    inflateEnd(&stream);
-    
-    if (ret != Z_STREAM_END && ret != Z_OK) {
-        log_error("Échec de décompression zlib: %d", ret);
-        free(decompressed);
-        free(decoded);
-        if (root) json_decref(root);
-        return 0;
-    }
-    
-    decompressed_len = stream.total_out;
-    
-    /* Sauvegarde du contenu */
-    char output_path[PATH_MAX];
-    snprintf(output_path, sizeof(output_path), "%s/package_content", output_dir);
-    
-    FILE *f = fopen(output_path, "wb");
-    if (!f) {
-        log_error("Impossible de créer le fichier de sortie");
-        free(decompressed);
-        free(decoded);
-        if (root) json_decref(root);
-        return 0;
-    }
-    
-    fwrite(decompressed, 1, decompressed_len, f);
+    char* buffer = malloc(size + 1);
+    fread(buffer, 1, size, f);
+    buffer[size] = '\0';
     fclose(f);
     
-    /* Nettoie la mémoire */
-    free(decompressed);
-    free(decoded);
-    if (root) json_decref(root);
+    json_t* root = json_loads(buffer, 0, NULL);
+    free(buffer);
     
-    /* Extrait si c'est une archive */
-    if (decompressed_len >= 2 && decompressed[0] == 0x1F && decompressed[1] == 0x8B) {
-        log_info("Extraction de l'archive...");
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "tar -xzf \"%s\" -C \"%s\" 2>/dev/null",
-                output_path, output_dir);
-        
-        if (system(cmd) == 0) {
-            remove(output_path);
-            log_success("Archive extraite avec succès");
-        } else {
-            log_warn("Échec de l'extraction, contenu brut conservé");
-        }
-    }
+    if (!root) return 0;
     
+    json_t* token = json_object_get(root, "token");
+    json_t* username = json_object_get(root, "username");
+    json_t* email = json_object_get(root, "email");
+    json_t* personal_code = json_object_get(root, "personal_code");
+    json_t* default_scope = json_object_get(root, "default_scope");
+    json_t* api_url = json_object_get(root, "api_url");
+    json_t* auto_update = json_object_get(root, "auto_update");
+    json_t* color_mode = json_object_get(root, "color_mode");
+    json_t* last_update = json_object_get(root, "last_update");
+    
+    if (token) strncpy(g_config.token, json_string_value(token), sizeof(g_config.token)-1);
+    if (username) strncpy(g_config.username, json_string_value(username), sizeof(g_config.username)-1);
+    if (email) strncpy(g_config.email, json_string_value(email), sizeof(g_config.email)-1);
+    if (personal_code) strncpy(g_config.personal_code, json_string_value(personal_code), sizeof(g_config.personal_code)-1);
+    if (default_scope) strncpy(g_config.default_scope, json_string_value(default_scope), sizeof(g_config.default_scope)-1);
+    if (api_url) strncpy(g_config.api_url, json_string_value(api_url), sizeof(g_config.api_url)-1);
+    
+    g_config.auto_update = auto_update ? json_integer_value(auto_update) : 1;
+    g_config.color_mode = color_mode ? json_integer_value(color_mode) : 1;
+    g_config.last_update = last_update ? json_integer_value(last_update) : 0;
+    g_config.verbose = 0;
+    
+    json_decref(root);
+    g_color_enabled = g_config.color_mode;
     return 1;
 }
 
-/* ============================================================================
- * COMMANDES PRINCIPALES
- * ============================================================================ */
-
-int cmd_login(const char *username, const char *password) {
-    UserConfig config = {0};
-    char url[512];
-    DownloadBuffer *buffer;
-    json_t *root;
-    json_error_t error;
+int save_config() {
+    if (!ensure_config_dir()) return 0;
     
-    log_info("Connexion en tant que %s...", username);
+    char* config_path = get_config_path(CONFIG_FILE);
     
-    /* Construction de l'URL */
-    snprintf(url, sizeof(url), "%s/api/auth/login", config.server_url);
+    json_t* root = json_object();
+    json_object_set_new(root, "token", json_string(g_config.token));
+    json_object_set_new(root, "username", json_string(g_config.username));
+    json_object_set_new(root, "email", json_string(g_config.email));
+    json_object_set_new(root, "personal_code", json_string(g_config.personal_code));
+    json_object_set_new(root, "default_scope", json_string(g_config.default_scope));
+    json_object_set_new(root, "api_url", json_string(g_config.api_url));
+    json_object_set_new(root, "auto_update", json_integer(g_config.auto_update));
+    json_object_set_new(root, "color_mode", json_integer(g_config.color_mode));
+    json_object_set_new(root, "last_update", json_integer(time(NULL)));
+    json_object_set_new(root, "version", json_string(VERSION));
     
-    /* Préparation de la requête JSON */
-    json_t *req = json_object();
-    json_object_set_new(req, "username", json_string(username));
-    json_object_set_new(req, "password", json_string(password));
-    
-    char *json_str = json_dumps(req, 0);
-    json_decref(req);
-    
-    /* Téléchargement (POST simplifié) */
-    CURL *curl = curl_easy_init();
-    if (!curl) {
+    char* json_str = json_dumps(root, JSON_INDENT(2));
+    FILE* f = fopen(config_path, "w");
+    if (!f) {
+        json_decref(root);
         free(json_str);
         return 0;
     }
     
-    /* Configuration pour POST */
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    
-    DownloadBuffer resp = {0};
-    resp.capacity = 4096;
-    resp.data = malloc(resp.capacity);
-    
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    free(json_str);
-    
-    if (res != CURLE_OK || resp.size == 0) {
-        log_error("Échec de la connexion au serveur");
-        free(resp.data);
-        return 0;
-    }
-    
-    /* Parse la réponse */
-    root = json_loads(resp.data, 0, &error);
-    free(resp.data);
-    
-    if (!root) {
-        log_error("Réponse serveur invalide: %s", error.text);
-        return 0;
-    }
-    
-    const char *token = json_string_value(json_object_get(root, "token"));
-    const char *personal_code = json_string_value(json_object_get(root, "personal_code"));
-    
-    if (!token) {
-        log_error("Token manquant dans la réponse");
-        json_decref(root);
-        return 0;
-    }
-    
-    /* Sauvegarde la configuration */
-    strncpy(config.username, username, sizeof(config.username)-1);
-    strncpy(config.token, token, sizeof(config.token)-1);
-    if (personal_code) {
-        strncpy(config.personal_code, personal_code, sizeof(config.personal_code)-1);
-    }
-    
-    if (save_config(&config)) {
-        log_success("Connecté avec succès!");
-        if (personal_code) {
-            printf(COLOR_MAGENTA "🔒 Code personnel: %s\n" COLOR_RESET, personal_code);
-        }
-    } else {
-        log_error("Échec de la sauvegarde de la configuration");
-        json_decref(root);
-        return 0;
-    }
+    fprintf(f, "%s", json_str);
+    fclose(f);
     
     json_decref(root);
+    free(json_str);
     return 1;
 }
 
-int cmd_install(const char *package_spec) {
-    UserConfig config;
-    PackageInfo pkg_info = {0};
-    char url[1024];
-    char target_dir[PATH_MAX];
-    DownloadBuffer *buffer;
-    
-    if (!load_config(&config)) {
-        log_error("Non connecté. Utilisez 'zarch login' d'abord.");
-        return 0;
-    }
-    
-    log_info("Installation de %s...", package_spec);
-    
-    /* Parse package_spec (format: @scope/name ou name) */
-    char scope[64] = "user";
-    char name[128];
-    
-    if (package_spec[0] == '@') {
-        char *slash = strchr(package_spec, '/');
-        if (slash) {
-            strncpy(scope, package_spec + 1, slash - package_spec - 1);
-            scope[slash - package_spec - 1] = '\0';
-            strncpy(name, slash + 1, sizeof(name)-1);
-        } else {
-            strcpy(name, package_spec + 1);
-        }
-    } else {
-        strncpy(name, package_spec, sizeof(name)-1);
-    }
-    
-    /* Vérifie si déjà installé */
-    snprintf(target_dir, sizeof(target_dir), "/usr/local/lib/swiftvelox/%s", name);
-    if (file_exists(target_dir)) {
-        log_warn("Package déjà installé dans %s", target_dir);
-        printf("Remplacer? (o/N): ");
-        char response[4];
-        fgets(response, sizeof(response), stdin);
-        if (response[0] != 'o' && response[0] != 'O') {
-            log_info("Installation annulée");
-            return 0;
-        }
-        /* Supprime l'ancienne version */
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", target_dir);
-        system(cmd);
-    }
-    
-    /* Récupère les métadonnées */
-    snprintf(url, sizeof(url), "%s/api/package/metadata/%s/%s",
-             config.server_url, scope, name);
-    
-    buffer = download_url(url, config.token, 30);
-    if (!buffer) {
-        log_error("Package non trouvé ou erreur réseau");
-        return 0;
-    }
-    
-    /* Parse les métadonnées */
-    json_t *meta = json_loads(buffer->data, 0, NULL);
-    download_buffer_free(buffer);
-    
-    if (!meta) {
-        log_error("Métadonnées invalides");
-        return 0;
-    }
-    
-    const char *version = json_string_value(json_object_get(meta, "version"));
-    const char *sha256 = json_string_value(json_object_get(meta, "sha256"));
-    
-    if (!version) {
-        log_error("Version non spécifiée dans les métadonnées");
-        json_decref(meta);
-        return 0;
-    }
-    
-    /* Télécharge le package */
-    snprintf(url, sizeof(url), "%s/package/download/%s/%s/%s",
-             config.server_url, scope, name, version);
-    
-    log_info("Téléchargement de la version %s...", version);
-    buffer = download_url(url, config.token, 60);
-    
-    if (!buffer || buffer->size == 0) {
-        log_error("Échec du téléchargement");
-        json_decref(meta);
-        return 0;
-    }
-    
-    /* Crée le répertoire cible */
-    mkdir(target_dir, 0755);
-    
-    /* Traite le package */
-    strncpy(pkg_info.name, name, sizeof(pkg_info.name)-1);
-    strncpy(pkg_info.scope, scope, sizeof(pkg_info.scope)-1);
-    strncpy(pkg_info.version, version, sizeof(pkg_info.version)-1);
-    
-    if (!process_zarch_package(buffer->data, buffer->size, target_dir, &pkg_info)) {
-        log_error("Échec du traitement du package");
-        download_buffer_free(buffer);
-        json_decref(meta);
-        return 0;
-    }
-    
-    download_buffer_free(buffer);
-    
-    /* Vérifie le SHA256 si disponible */
-    if (sha256) {
-        char computed_sha[65];
-        /* Note: nécessite le contenu original, pas le contenu traité */
-        log_debug("SHA256 attendu: %s", sha256);
-        /* Implémenter la vérification ici */
-    }
-    
-    /* Sauvegarde les métadonnées locales */
-    char meta_path[PATH_MAX];
-    snprintf(meta_path, sizeof(meta_path), "%s/.zarch_meta.json", target_dir);
-    
-    FILE *fp = fopen(meta_path, "w");
-    if (fp) {
-        json_dumpf(meta, fp, JSON_INDENT(2));
-        fclose(fp);
-    }
-    
-    json_decref(meta);
-    
-    log_success("Package %s v%s installé avec succès!", name, version);
-    printf("Emplacement: %s\n", target_dir);
-    
-    return 1;
+// ===== ARGUMENT PARSING =====
+void init_args(Args* args, int argc, char** argv) {
+    memset(args, 0, sizeof(Args));
+    args->argc = argc;
+    args->argv = argv;
+    strcpy(args->output_format, "pretty");
+    strcpy(args->path, ".");
 }
 
-int cmd_publish(const char *path, const char *personal_code, int auto_version) {
-    UserConfig config;
-    char manifest_path[PATH_MAX];
-    char archive_path[PATH_MAX];
-    FILE *fp;
-    json_t *manifest;
-    json_error_t error;
-    
-    if (!load_config(&config)) {
-        log_error("Non connecté. Utilisez 'zarch login' d'abord.");
-        return 0;
-    }
-    
-    if (!personal_code || !personal_code[0]) {
-        log_error("Code personnel requis pour la publication");
-        return 0;
-    }
-    
-    /* Lit le manifeste */
-    snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", path);
-    if (!file_exists(manifest_path)) {
-        log_error("zarch.json manquant dans %s", path);
-        return 0;
-    }
-    
-    if (!(fp = fopen(manifest_path, "r"))) {
-        log_error("Impossible de lire zarch.json: %s", strerror(errno));
-        return 0;
-    }
-    
-    manifest = json_loadf(fp, 0, &error);
-    fclose(fp);
-    
-    if (!manifest) {
-        log_error("zarch.json invalide (ligne %d): %s", error.line, error.text);
-        return 0;
-    }
-    
-    const char *name = json_string_value(json_object_get(manifest, "name"));
-    const char *scope = json_string_value(json_object_get(manifest, "scope"));
-    const char *version = json_string_value(json_object_get(manifest, "version"));
-    const char *author = json_string_value(json_object_get(manifest, "author"));
-    
-    if (!name || !version) {
-        log_error("Champs 'name' ou 'version' manquants");
-        json_decref(manifest);
-        return 0;
-    }
-    
-    if (!scope) scope = "user";
-    
-    /* Incrémente la version si demandé */
-    if (auto_version) {
-        char new_version[32];
-        int major, minor, patch;
+int parse_bool_arg(const char* arg) {
+    return (strcmp(arg, "true") == 0 || strcmp(arg, "1") == 0 || 
+            strcmp(arg, "yes") == 0 || strcmp(arg, "on") == 0);
+}
+
+void parse_args(Args* args) {
+    for (int i = 1; i < args->argc; i++) {
+        char* arg = args->argv[i];
         
-        if (sscanf(version, "%d.%d.%d", &major, &minor, &patch) == 3) {
-            patch++;
-            snprintf(new_version, sizeof(new_version), "%d.%d.%d", major, minor, patch);
-            json_object_set_new(manifest, "version", json_string(new_version));
-            version = new_version;
-            
-            /* Sauvegarde la nouvelle version */
-            fp = fopen(manifest_path, "w");
-            if (fp) {
-                json_dumpf(manifest, fp, JSON_INDENT(2));
-                fclose(fp);
+        // Command detection
+        if (i == 1 && arg[0] != '-') {
+            strncpy(args->command, arg, sizeof(args->command)-1);
+            continue;
+        }
+        
+        // Subcommand detection
+        if (i == 2 && arg[0] != '-' && strlen(args->command) > 0) {
+            strncpy(args->subcommand, arg, sizeof(args->subcommand)-1);
+            continue;
+        }
+        
+        // Flags
+        if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+            args->help = 1;
+        } else if (strcmp(arg, "--version") == 0 || strcmp(arg, "-v") == 0) {
+            args->version_flag = 1;
+        } else if (strcmp(arg, "--verbose") == 0 || strcmp(arg, "-V") == 0) {
+            args->verbose = 1;
+            g_config.verbose = 1;
+        } else if (strcmp(arg, "--quiet") == 0 || strcmp(arg, "-q") == 0) {
+            args->quiet = 1;
+        } else if (strcmp(arg, "--json") == 0 || strcmp(arg, "-j") == 0) {
+            args->json = 1;
+            strcpy(args->output_format, "json");
+        } else if (strcmp(arg, "--force") == 0 || strcmp(arg, "-f") == 0) {
+            args->force = 1;
+        } else if (strcmp(arg, "--yes") == 0 || strcmp(arg, "-y") == 0) {
+            args->yes = 1;
+        } else if (strcmp(arg, "--no-cache") == 0) {
+            args->no_cache = 1;
+        } else if (strcmp(arg, "--auto-version") == 0) {
+            args->auto_version = 1;
+        } else if (strcmp(arg, "--all") == 0 || strcmp(arg, "-a") == 0) {
+            args->all = 1;
+        } else if (strcmp(arg, "--global") == 0 || strcmp(arg, "-g") == 0) {
+            args->global = 1;
+        } else if (strcmp(arg, "--local") == 0 || strcmp(arg, "-l") == 0) {
+            args->local = 1;
+        } else if (strcmp(arg, "--list") == 0) {
+            args->list = 1;
+        } else if (strcmp(arg, "--interactive") == 0 || strcmp(arg, "-i") == 0) {
+            args->interactive = 1;
+        }
+        
+        // Options with values
+        else if (strncmp(arg, "--scope=", 8) == 0) {
+            strncpy(args->scope, arg + 8, sizeof(args->scope)-1);
+        } else if (strncmp(arg, "--version=", 10) == 0) {
+            strncpy(args->version, arg + 10, sizeof(args->version)-1);
+        } else if (strncmp(arg, "--path=", 7) == 0) {
+            strncpy(args->path, arg + 7, sizeof(args->path)-1);
+        } else if (strncmp(arg, "--output=", 9) == 0) {
+            strncpy(args->output_format, arg + 9, sizeof(args->output_format)-1);
+        } else if (strncmp(arg, "--tag=", 6) == 0) {
+            strncpy(args->tag, arg + 6, sizeof(args->tag)-1);
+        } else if (strcmp(arg, "--scope") == 0 && i+1 < args->argc) {
+            strncpy(args->scope, args->argv[++i], sizeof(args->scope)-1);
+        } else if (strcmp(arg, "--version") == 0 && i+1 < args->argc) {
+            strncpy(args->version, args->argv[++i], sizeof(args->version)-1);
+        } else if (strcmp(arg, "--path") == 0 && i+1 < args->argc) {
+            strncpy(args->path, args->argv[++i], sizeof(args->path)-1);
+        }
+        
+        // Package name (first non-option after command)
+        else if (arg[0] != '-' && strlen(args->package_name) == 0 && 
+                (strcmp(args->command, "install") == 0 ||
+                 strcmp(args->command, "uninstall") == 0 ||
+                 strcmp(args->command, "remove") == 0 ||
+                 strcmp(args->command, "search") == 0 ||
+                 strcmp(args->command, "info") == 0 ||
+                 strcmp(args->command, "update") == 0)) {
+            strncpy(args->package_name, arg, sizeof(args->package_name)-1);
+        }
+        
+        // Username/password for login
+        else if (strcmp(args->command, "login") == 0) {
+            if (strlen(args->username) == 0) {
+                strncpy(args->username, arg, sizeof(args->username)-1);
+            } else if (strlen(args->password) == 0) {
+                strncpy(args->password, arg, sizeof(args->password)-1);
             }
-            
-            log_info("Version incrémentée: %s", version);
+        }
+        
+        // Personal code for publish
+        else if (strcmp(args->command, "publish") == 0 && strlen(args->personal_code) == 0) {
+            strncpy(args->personal_code, arg, sizeof(args->personal_code)-1);
+        }
+        
+        // Query for search
+        else if (strcmp(args->command, "search") == 0 && strlen(args->query) == 0) {
+            strncpy(args->query, arg, sizeof(args->query)-1);
         }
     }
+}
+
+// ===== PACKAGE MANIFEST =====
+json_t* read_manifest(const char* path) {
+    char manifest_path[1024];
+    snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", path);
     
-    /* Valide la structure du package */
-    PackageInfo pkg_info = {0};
-    snprintf(archive_path, sizeof(archive_path), "/tmp/%s-%s.tar.gz", name, version);
+    if (!file_exists(manifest_path)) {
+        return NULL;
+    }
     
-    /* Crée l'archive */
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "tar -czf \"%s\" -C \"%s\" . 2>/dev/null",
-             archive_path, path);
+    json_error_t error;
+    json_t* root = json_load_file(manifest_path, 0, &error);
+    return root;
+}
+
+int write_manifest(const char* path, json_t* manifest) {
+    char manifest_path[1024];
+    snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", path);
+    
+    char* json_str = json_dumps(manifest, JSON_INDENT(2));
+    FILE* f = fopen(manifest_path, "w");
+    if (!f) {
+        free(json_str);
+        return 0;
+    }
+    
+    fprintf(f, "%s", json_str);
+    fclose(f);
+    free(json_str);
+    return 1;
+}
+
+void increment_version(char* version) {
+    int major = 0, minor = 0, patch = 0;
+    sscanf(version, "%d.%d.%d", &major, &minor, &patch);
+    patch++;
+    snprintf(version, 32, "%d.%d.%d", major, minor, patch);
+}
+
+// ===== PACKAGE BUILDING =====
+int build_package(const char* path, char* output_path, size_t output_size) {
+    print_step("Construction du package...");
+    
+    json_t* manifest = read_manifest(path);
+    if (!manifest) {
+        print_error("zarch.json non trouvé");
+        return 0;
+    }
+    
+    const char* name = json_string_value(json_object_get(manifest, "name"));
+    const char* scope = json_string_value(json_object_get(manifest, "scope"));
+    char version[32];
+    
+    if (g_args.auto_version) {
+        const char* current_version = json_string_value(json_object_get(manifest, "version"));
+        strcpy(version, current_version);
+        increment_version(version);
+        json_object_set_new(manifest, "version", json_string(version));
+        write_manifest(path, manifest);
+        print_info("Version incrémentée: %s -> %s", current_version, version);
+    } else {
+        const char* ver = json_string_value(json_object_get(manifest, "version"));
+        if (ver) strcpy(version, ver);
+        else strcpy(version, "1.0.0");
+    }
+    
+    if (!scope || strcmp(scope, "") == 0) {
+        scope = g_config.default_scope;
+        if (strlen(scope) == 0) scope = "user";
+    }
+    
+    // Create temp directory
+    char temp_dir[1024];
+    snprintf(temp_dir, sizeof(temp_dir), "/tmp/zarch-build-%ld", (long)time(NULL));
+    create_directory(temp_dir);
+    
+    // Copy files based on include patterns
+    const char* include = json_string_value(json_object_get(manifest, "include"));
+    if (!include) include = ".";
+    
+    char cmd[2048];
+    if (strcmp(include, ".") == 0 || strcmp(include, "./") == 0) {
+        // Copy everything except .git, node_modules, etc.
+        snprintf(cmd, sizeof(cmd), "cd \"%s\" && find . -type f -not -path './.git/*' -not -path './node_modules/*' -not -path './.zarch/*' -exec cp --parents {} \"%s\" \\; 2>/dev/null || true", 
+                path, temp_dir);
+    } else {
+        // Copy specific patterns
+        snprintf(cmd, sizeof(cmd), "cd \"%s\" && cp -r %s \"%s\" 2>/dev/null || true", 
+                path, include, temp_dir);
+    }
+    
+    system(cmd);
+    
+    // Create final archive
+    snprintf(output_path, output_size, "/tmp/%s-%s-%s.tar.gz", scope, name, version);
+    
+    snprintf(cmd, sizeof(cmd), "tar -czf \"%s\" -C \"%s\" . 2>/dev/null", output_path, temp_dir);
     
     if (system(cmd) != 0) {
-        log_error("Échec de la création de l'archive");
+        print_error("Échec de la création de l'archive");
+        // Cleanup
+        snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", temp_dir);
+        system(cmd);
         json_decref(manifest);
         return 0;
     }
     
-    if (!validate_svlib_structure(archive_path, &pkg_info)) {
-        log_error("Structure .svlib invalide");
-        remove(archive_path);
-        json_decref(manifest);
-        return 0;
+    // Cleanup temp dir
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", temp_dir);
+    system(cmd);
+    
+    // Compute SHA256
+    char sha_cmd[1024];
+    snprintf(sha_cmd, sizeof(sha_cmd), "sha256sum \"%s\" | cut -d' ' -f1", output_path);
+    FILE* sha_pipe = popen(sha_cmd, "r");
+    char sha256[65] = {0};
+    if (sha_pipe) {
+        fgets(sha256, sizeof(sha256), sha_pipe);
+        sha256[strcspn(sha256, "\n")] = 0;
+        pclose(sha_pipe);
     }
     
-    /* Prépare l'upload */
+    // Get file size
+    struct stat st;
+    stat(output_path, &st);
+    
+    if (!g_args.quiet) {
+        printf("📦 Package: %s v%s\n", name, version);
+        printf("📁 Scope: %s\n", scope);
+        printf("📏 Taille: %.2f MB\n", (double)st.st_size / (1024*1024));
+        printf("🔐 SHA256: %s\n", sha256);
+        printf("📄 Fichier: %s\n", output_path);
+    }
+    
+    json_decref(manifest);
+    print_success("Package construit avec succès");
+    return 1;
+}
+
+// ===== API COMMANDS =====
+int cmd_login() {
+    if (strlen(g_args.username) == 0 || strlen(g_args.password) == 0) {
+        if (!g_args.interactive) {
+            print_error("Usage: zarch login <username> <password>");
+            return 0;
+        }
+        
+        printf("Username: ");
+        fgets(g_args.username, sizeof(g_args.username), stdin);
+        g_args.username[strcspn(g_args.username, "\n")] = 0;
+        
+        printf("Password: ");
+        // Disable echo for password
+        system("stty -echo");
+        fgets(g_args.password, sizeof(g_args.password), stdin);
+        g_args.password[strcspn(g_args.password, "\n")] = 0;
+        system("stty echo");
+        printf("\n");
+    }
+    
+    print_step("Connexion en cours...");
+    
     char url[1024];
-    snprintf(url, sizeof(url), "%s/api/package/upload/%s/%s?token=%s",
-             config.server_url, scope, name, config.token);
+    snprintf(url, sizeof(url), "%s/api/auth/login", g_config.api_url);
     
-    log_info("Publication de %s v%s...", name, version);
+    json_t* data = json_object();
+    json_object_set_new(data, "username", json_string(g_args.username));
+    json_object_set_new(data, "password", json_string(g_args.password));
     
-    /* Upload via curl (multipart form) */
+    char* data_str = json_dumps(data, 0);
+    int http_code = 0;
+    json_t* response = api_request(url, "POST", data_str, &http_code);
+    
+    free(data_str);
+    json_decref(data);
+    
+    if (!response) {
+        print_error("Échec de la connexion");
+        return 0;
+    }
+    
+    if (http_code != 200) {
+        const char* error = json_string_value(json_object_get(response, "error"));
+        print_error(error ? error : "Échec de la connexion");
+        json_decref(response);
+        return 0;
+    }
+    
+    json_t* token = json_object_get(response, "token");
+    json_t* user = json_object_get(response, "user");
+    
+    if (token && user) {
+        strncpy(g_config.token, json_string_value(token), sizeof(g_config.token)-1);
+        strncpy(g_config.username, json_string_value(json_object_get(user, "username")), 
+                sizeof(g_config.username)-1);
+        
+        json_t* email = json_object_get(user, "email");
+        if (email) {
+            strncpy(g_config.email, json_string_value(email), sizeof(g_config.email)-1);
+        }
+        
+        save_config();
+        print_success("Connecté avec succès");
+        
+        if (g_args.json) {
+            json_print_object(response);
+        }
+    }
+    
+    json_decref(response);
+    return 1;
+}
+
+int cmd_logout() {
+    print_step("Déconnexion...");
+    
+    // Clear local config
+    memset(g_config.token, 0, sizeof(g_config.token));
+    memset(g_config.username, 0, sizeof(g_config.username));
+    save_config();
+    
+    print_success("Déconnecté avec succès");
+    return 1;
+}
+
+int cmd_whoami() {
+    if (strlen(g_config.username) == 0) {
+        print_error("Non connecté");
+        return 0;
+    }
+    
+    if (g_args.json) {
+        json_t* obj = json_object();
+        json_object_set_new(obj, "username", json_string(g_config.username));
+        json_object_set_new(obj, "email", json_string(g_config.email));
+        json_object_set_new(obj, "scope", json_string(g_config.default_scope));
+        json_print_object(obj);
+        json_decref(obj);
+    } else {
+        printf("👤 Utilisateur: %s%s%s\n", COLOR_GREEN, g_config.username, COLOR_RESET);
+        if (strlen(g_config.email) > 0) {
+            printf("📧 Email: %s\n", g_config.email);
+        }
+        if (strlen(g_config.default_scope) > 0) {
+            printf("🏷️  Scope par défaut: %s\n", g_config.default_scope);
+        }
+    }
+    
+    return 1;
+}
+
+int cmd_init() {
+    print_step("Initialisation d'un nouveau package...");
+    
+    char manifest_path[1024];
+    snprintf(manifest_path, sizeof(manifest_path), "%s/zarch.json", g_args.path);
+    
+    if (file_exists(manifest_path) && !g_args.force) {
+        print_error("zarch.json existe déjà. Utilisez --force pour écraser.");
+        return 0;
+    }
+    
+    char name[128], version[32], description[256], author[128], license[32], scope[64], main_file[256];
+    
+    if (g_args.interactive || (!g_args.package_name && !g_args.version)) {
+        printf("Nom du package: ");
+        fgets(name, sizeof(name), stdin);
+        name[strcspn(name, "\n")] = 0;
+        
+        printf("Version (1.0.0): ");
+        fgets(version, sizeof(version), stdin);
+        version[strcspn(version, "\n")] = 0;
+        if (!version[0]) strcpy(version, "1.0.0");
+        
+        printf("Description: ");
+        fgets(description, sizeof(description), stdin);
+        description[strcspn(description, "\n")] = 0;
+        
+        printf("Auteur: ");
+        fgets(author, sizeof(author), stdin);
+        author[strcspn(author, "\n")] = 0;
+        
+        printf("License (MIT): ");
+        fgets(license, sizeof(license), stdin);
+        license[strcspn(license, "\n")] = 0;
+        if (!license[0]) strcpy(license, "MIT");
+        
+        printf("Scope (%s): ", g_config.default_scope);
+        fgets(scope, sizeof(scope), stdin);
+        scope[strcspn(scope, "\n")] = 0;
+        if (!scope[0] && strlen(g_config.default_scope) > 0) {
+            strcpy(scope, g_config.default_scope);
+        } else if (!scope[0]) {
+            strcpy(scope, "user");
+        }
+        
+        printf("Fichier principal (src/main.svlib): ");
+        fgets(main_file, sizeof(main_file), stdin);
+        main_file[strcspn(main_file, "\n")] = 0;
+        if (!main_file[0]) strcpy(main_file, "src/main.svlib");
+    } else {
+        strcpy(name, g_args.package_name);
+        strcpy(version, g_args.version[0] ? g_args.version : "1.0.0");
+        strcpy(description, "Package créé avec Zarch");
+        strcpy(author, g_config.username);
+        strcpy(license, "MIT");
+        strcpy(scope, g_args.scope[0] ? g_args.scope : 
+               (strlen(g_config.default_scope) > 0 ? g_config.default_scope : "user"));
+        strcpy(main_file, "src/main.svlib");
+    }
+    
+    // Create manifest
+    json_t* manifest = json_object();
+    json_object_set_new(manifest, "name", json_string(name));
+    json_object_set_new(manifest, "version", json_string(version));
+    json_object_set_new(manifest, "description", json_string(description));
+    json_object_set_new(manifest, "author", json_string(author));
+    json_object_set_new(manifest, "license", json_string(license));
+    json_object_set_new(manifest, "scope", json_string(scope));
+    json_object_set_new(manifest, "main", json_string(main_file));
+    json_object_set_new(manifest, "include", json_string("src/"));
+    
+    if (!write_manifest(g_args.path, manifest)) {
+        print_error("Échec de la création du manifeste");
+        json_decref(manifest);
+        return 0;
+    }
+    
+    // Create directory structure
+    create_directory("src");
+    create_directory("tests");
+    create_directory("examples");
+    
+    // Create main.svlib
+    char main_path[1024];
+    snprintf(main_path, sizeof(main_path), "%s/%s", g_args.path, main_file);
+    FILE* f = fopen(main_path, "w");
+    if (f) {
+        fprintf(f, "// %s v%s\n", name, version);
+        fprintf(f, "// %s\n\n", description);
+        fprintf(f, "module %s {\n", name);
+        fprintf(f, "    // Votre code ici\n");
+        fprintf(f, "}\n");
+        fclose(f);
+    }
+    
+    // Create README.md
+    char readme_path[1024];
+    snprintf(readme_path, sizeof(readme_path), "%s/README.md", g_args.path);
+    f = fopen(readme_path, "w");
+    if (f) {
+        fprintf(f, "# %s\n\n", name);
+        fprintf(f, "%s\n\n", description);
+        fprintf(f, "## Installation\n\n");
+        fprintf(f, "```bash\nzarch install %s\n```\n\n", name);
+        fprintf(f, "## Utilisation\n\n");
+        fprintf(f, "```swiftvelox\nimport %s\n```\n", name);
+        fclose(f);
+    }
+    
+    // Create .gitignore
+    char gitignore_path[1024];
+    snprintf(gitignore_path, sizeof(gitignore_path), "%s/.gitignore", g_args.path);
+    f = fopen(gitignore_path, "w");
+    if (f) {
+        fprintf(f, "*.tar.gz\n");
+        fprintf(f, ".zarch/\n");
+        fprintf(f, "node_modules/\n");
+        fprintf(f, "__pycache__/\n");
+        fprintf(f, "*.pyc\n");
+        fclose(f);
+    }
+    
+    json_decref(manifest);
+    print_success("Package initialisé avec succès");
+    
+    if (!g_args.quiet) {
+        printf("\n📁 Structure créée:\n");
+        printf("  📄 zarch.json    - Manifeste du package\n");
+        printf("  📄 README.md     - Documentation\n");
+        printf("  📄 %s - Fichier principal\n", main_file);
+        printf("  📄 .gitignore    - Fichiers ignorés\n");
+        printf("  📁 src/          - Code source\n");
+        printf("  📁 tests/        - Tests\n");
+        printf("  📁 examples/     - Exemples\n");
+    }
+    
+    return 1;
+}
+
+int cmd_build() {
+    char output_path[1024];
+    if (!build_package(g_args.path, output_path, sizeof(output_path))) {
+        return 0;
+    }
+    return 1;
+}
+
+int cmd_publish() {
+    // Check if logged in
+    if (strlen(g_config.token) == 0) {
+        print_error("Vous devez être connecté pour publier");
+        return 0;
+    }
+    
+    // Get personal code if not provided
+    if (strlen(g_args.personal_code) == 0) {
+        if (strlen(g_config.personal_code) > 0 && !g_args.interactive) {
+            strcpy(g_args.personal_code, g_config.personal_code);
+        } else {
+            printf("Code de sécurité personnel: ");
+            fgets(g_args.personal_code, sizeof(g_args.personal_code), stdin);
+            g_args.personal_code[strcspn(g_args.personal_code, "\n")] = 0;
+        }
+    }
+    
+    // Build package
+    char archive_path[1024];
+    if (!build_package(g_args.path, archive_path, sizeof(archive_path))) {
+        return 0;
+    }
+    
+    // Read manifest for metadata
+    json_t* manifest = read_manifest(g_args.path);
+    if (!manifest) {
+        print_error("Manifeste non trouvé");
+        return 0;
+    }
+    
+    const char* name = json_string_value(json_object_get(manifest, "name"));
+    const char* scope = json_string_value(json_object_get(manifest, "scope"));
+    const char* version = json_string_value(json_object_get(manifest, "version"));
+    const char* description = json_string_value(json_object_get(manifest, "description"));
+    const char* license = json_string_value(json_object_get(manifest, "license"));
+    
+    if (!scope || strcmp(scope, "") == 0) {
+        scope = g_config.default_scope;
+        if (strlen(scope) == 0) scope = "user";
+    }
+    
+    print_step("Publication du package...");
+    
+    // Prepare upload
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/api/package/upload/%s/%s", 
+             g_config.api_url, scope, name);
+    
+    // Create form data
     CURL *curl = curl_easy_init();
     if (!curl) {
-        remove(archive_path);
+        print_error("Échec d'initialisation CURL");
         json_decref(manifest);
         return 0;
     }
     
+    struct MemoryStruct chunk = {malloc(1), 0};
     struct curl_httppost *form = NULL;
     struct curl_httppost *last = NULL;
     
+    // Add file
     curl_formadd(&form, &last,
-                 CURLFORM_COPYNAME, "file",
-                 CURLFORM_FILE, archive_path,
-                 CURLFORM_FILENAME, archive_path,
-                 CURLFORM_END);
+                CURLFORM_COPYNAME, "file",
+                CURLFORM_FILE, archive_path,
+                CURLFORM_FILENAME, basename(archive_path),
+                CURLFORM_END);
+    
+    // Add metadata
+    curl_formadd(&form, &last,
+                CURLFORM_COPYNAME, "version",
+                CURLFORM_COPYCONTENTS, version,
+                CURLFORM_END);
     
     curl_formadd(&form, &last,
-                 CURLFORM_COPYNAME, "version",
-                 CURLFORM_COPYCONTENTS, version,
-                 CURLFORM_END);
+                CURLFORM_COPYNAME, "description",
+                CURLFORM_COPYCONTENTS, description ? description : "",
+                CURLFORM_END);
     
     curl_formadd(&form, &last,
-                 CURLFORM_COPYNAME, "personal_code",
-                 CURLFORM_COPYCONTENTS, personal_code,
-                 CURLFORM_END);
+                CURLFORM_COPYNAME, "license",
+                CURLFORM_COPYCONTENTS, license ? license : "MIT",
+                CURLFORM_END);
     
     curl_formadd(&form, &last,
-                 CURLFORM_COPYNAME, "description",
-                 CURLFORM_COPYCONTENTS, pkg_info.description,
-                 CURLFORM_END);
+                CURLFORM_COPYNAME, "personal_code",
+                CURLFORM_COPYCONTENTS, g_args.personal_code,
+                CURLFORM_END);
+    
+    // Add README if exists
+    char readme_path[1024];
+    snprintf(readme_path, sizeof(readme_path), "%s/README.md", g_args.path);
+    if (file_exists(readme_path)) {
+        curl_formadd(&form, &last,
+                    CURLFORM_COPYNAME, "readme",
+                    CURLFORM_FILE, readme_path,
+                    CURLFORM_END);
+    }
+    
+    // Set headers
+    struct curl_slist *headers = NULL;
+    char auth_header[512];
+    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", g_config.token);
+    headers = curl_slist_append(headers, auth_header);
     
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_HTTPPOST, form);
-    
-    DownloadBuffer resp = {0};
-    resp.capacity = 4096;
-    resp.data = malloc(resp.capacity);
-    
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
     
     CURLcode res = curl_easy_perform(curl);
-    curl_formfree(form);
-    curl_easy_cleanup(curl);
-    remove(archive_path);
     
-    if (res != CURLE_OK) {
-        log_error("Échec de l'upload: %s", curl_easy_strerror(res));
-        free(resp.data);
-        json_decref(manifest);
-        return 0;
-    }
-    
-    /* Parse la réponse */
-    json_t *result = json_loads(resp.data, 0, NULL);
-    free(resp.data);
-    
-    if (!result) {
-        log_error("Réponse serveur invalide");
-        json_decref(manifest);
-        return 0;
-    }
-    
-    const char *message = json_string_value(json_object_get(result, "message"));
-    if (json_is_true(json_object_get(result, "success"))) {
-        log_success("Publication réussie!");
-        if (message) printf("%s\n", message);
+    if (res == CURLE_OK) {
+        json_t* response = json_loads(chunk.memory, 0, NULL);
+        if (response) {
+            json_t* success = json_object_get(response, "success");
+            if (json_is_true(success)) {
+                print_success("Package publié avec succès!");
+                
+                if (g_args.json) {
+                    json_print_object(response);
+                } else {
+                    json_t* pkg = json_object_get(response, "package");
+                    if (pkg) {
+                        printf("📦 Nom: %s\n", json_string_value(json_object_get(pkg, "name")));
+                        printf("🏷️  Scope: %s\n", json_string_value(json_object_get(pkg, "scope")));
+                        printf("🔢 Version: %s\n", json_string_value(json_object_get(pkg, "version")));
+                        printf("📏 Taille: %ld bytes\n", (long)json_integer_value(json_object_get(pkg, "size")));
+                        printf("🔐 SHA256: %s\n", json_string_value(json_object_get(pkg, "sha256")));
+                    }
+                }
+            } else {
+                const char* error = json_string_value(json_object_get(response, "error"));
+                print_error(error ? error : "Échec de la publication");
+            }
+            json_decref(response);
+        }
     } else {
-        const char *error_msg = json_string_value(json_object_get(result, "error"));
-        log_error("Échec: %s", error_msg ? error_msg : "Raison inconnue");
-        json_decref(result);
-        json_decref(manifest);
-        return 0;
+        print_error("Échec de l'upload");
     }
     
-    json_decref(result);
+    curl_easy_cleanup(curl);
+    curl_formfree(form);
+    curl_slist_free_all(headers);
+    free(chunk.memory);
+    
+    // Cleanup archive
+    remove(archive_path);
     json_decref(manifest);
-    return 1;
+    
+    return res == CURLE_OK;
 }
 
-int cmd_search(const char *query) {
-    UserConfig config;
-    char url[512];
-    DownloadBuffer *buffer;
-    
-    if (!load_config(&config)) {
-        /* Recherche publique sans login */
-        strcpy(config.server_url, "https://zenv-hub.onrender.com");
-    }
-    
-    snprintf(url, sizeof(url), "%s/zarch/INDEX", config.server_url);
-    
-    log_info("Recherche de '%s'...", query ? query : "(tous)");
-    
-    buffer = download_url(url, NULL, 30);
-    if (!buffer) {
-        log_error("Impossible de récupérer l'index");
+int cmd_install() {
+    if (strlen(g_args.package_name) == 0) {
+        print_error("Nom du package requis");
         return 0;
     }
     
-    json_t *index = json_loads(buffer->data, 0, NULL);
-    download_buffer_free(buffer);
+    print_step("Installation de %s...", g_args.package_name);
     
-    if (!index) {
-        log_error("Index invalide");
+    // Parse package name for scope
+    char scope[64] = "user";
+    char name[128];
+    
+    if (g_args.package_name[0] == '@') {
+        char* slash = strchr(g_args.package_name, '/');
+        if (slash) {
+            strncpy(scope, g_args.package_name + 1, slash - g_args.package_name - 1);
+            scope[slash - g_args.package_name - 1] = 0;
+            strncpy(name, slash + 1, sizeof(name) - 1);
+        } else {
+            strcpy(name, g_args.package_name + 1);
+        }
+    } else {
+        strcpy(name, g_args.package_name);
+    }
+    
+    // If version specified, use it
+    char version[32] = "latest";
+    if (strlen(g_args.version) > 0) {
+        strcpy(version, g_args.version);
+    }
+    
+    // Get package info first
+    char info_url[1024];
+    snprintf(info_url, sizeof(info_url), "%s/api/package/info/%s/%s", 
+             g_config.api_url, scope, name);
+    
+    int http_code = 0;
+    json_t* info = api_request(info_url, "GET", NULL, &http_code);
+    
+    if (!info || http_code != 200) {
+        print_error("Package non trouvé");
+        if (info) json_decref(info);
         return 0;
     }
     
-    json_t *packages = json_object_get(index, "packages");
-    const char *key;
-    json_t *value;
-    int count = 0;
+    // Get latest version if not specified
+    if (strcmp(version, "latest") == 0) {
+        const char* latest = json_string_value(json_object_get(info, "latest_version"));
+        if (latest) strcpy(version, latest);
+    }
     
-    printf("\n" COLOR_CYAN "📦 Paquets disponibles:\n" COLOR_RESET);
-    printf("========================================\n");
+    // Download package
+    char download_url[1024];
+    snprintf(download_url, sizeof(download_url), "%s/package/download/%s/%s/%s", 
+             g_config.api_url, scope, name, version);
     
-    json_object_foreach(packages, key, value) {
-        if (!query || strstr(key, query)) {
-            const char *ver = json_string_value(json_object_get(value, "version"));
-            const char *desc = json_string_value(json_object_get(value, "description"));
-            const char *author = json_string_value(json_object_get(value, "author"));
-            
-            printf(COLOR_GREEN "• %s" COLOR_RESET " v%s\n", key, ver);
-            if (desc) printf("  %s\n", desc);
-            if (author) printf("  Par: %s\n", author);
-            printf("\n");
-            count++;
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        print_error("Échec d'initialisation CURL");
+        json_decref(info);
+        return 0;
+    }
+    
+    struct MemoryStruct chunk = {malloc(1), 0};
+    curl_easy_setopt(curl, CURLOPT_URL, download_url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+    
+    CURLcode res = curl_easy_perform(curl);
+    
+    if (res != CURLE_OK || chunk.size == 0) {
+        print_error("Échec du téléchargement");
+        curl_easy_cleanup(curl);
+        free(chunk.memory);
+        json_decref(info);
+        return 0;
+    }
+    
+    // Create installation directory
+    char install_dir[1024];
+    if (g_args.global) {
+        snprintf(install_dir, sizeof(install_dir), "%s/%s", LIB_PATH, name);
+    } else {
+        snprintf(install_dir, sizeof(install_dir), "%s/.zarch/packages/%s", getenv("HOME"), name);
+    }
+    
+    if (file_exists(install_dir)) {
+        if (g_args.force || g_args.yes) {
+            // Remove existing
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", install_dir);
+            system(cmd);
+        } else {
+            printf("Le package existe déjà. Remplacer? [y/N]: ");
+            char response[4];
+            fgets(response, sizeof(response), stdin);
+            if (response[0] != 'y' && response[0] != 'Y') {
+                print_info("Installation annulée");
+                curl_easy_cleanup(curl);
+                free(chunk.memory);
+                json_decref(info);
+                return 0;
+            }
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", install_dir);
+            system(cmd);
         }
     }
     
-    printf("Trouvé: %d paquet(s)\n", count);
-    json_decref(index);
+    create_directory(install_dir);
     
-    return count > 0;
-}
-
-int cmd_list(void) {
-    char lib_path[] = "/usr/local/lib/swiftvelox";
-    DIR *dir;
-    struct dirent *entry;
-    int count = 0;
+    // Save and extract archive
+    char temp_file[1024];
+    snprintf(temp_file, sizeof(temp_file), "/tmp/zarch-install-%ld.tar.gz", (long)time(NULL));
     
-    if (!(dir = opendir(lib_path))) {
-        log_error("Répertoire des librairies non trouvé: %s", lib_path);
+    FILE* f = fopen(temp_file, "wb");
+    if (!f) {
+        print_error("Échec de création du fichier temporaire");
+        curl_easy_cleanup(curl);
+        free(chunk.memory);
+        json_decref(info);
         return 0;
     }
     
-    printf("\n" COLOR_CYAN "📁 Paquets installés:\n" COLOR_RESET);
-    printf("========================================\n");
+    fwrite(chunk.memory, 1, chunk.size, f);
+    fclose(f);
     
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] != '.') {
-            char pkg_path[PATH_MAX];
-            char meta_path[PATH_MAX];
+    // Extract
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "tar -xzf \"%s\" -C \"%s\"", temp_file, install_dir);
+    
+    if (system(cmd) != 0) {
+        print_error("Échec de l'extraction");
+    } else {
+        print_success("Package installé avec succès");
+        
+        if (!g_args.quiet) {
+            printf("📁 Emplacement: %s\n", install_dir);
+            printf("🔢 Version: %s\n", version);
             
-            snprintf(pkg_path, sizeof(pkg_path), "%s/%s", lib_path, entry->d_name);
-            snprintf(meta_path, sizeof(meta_path), "%s/.zarch_meta.json", pkg_path);
-            
-            if (file_exists(pkg_path)) {
-                /* Essaie de lire les métadonnées */
-                FILE *fp = fopen(meta_path, "r");
-                if (fp) {
-                    json_t *meta = json_loadf(fp, 0, NULL);
-                    fclose(fp);
-                    
-                    if (meta) {
-                        const char *version = json_string_value(json_object_get(meta, "version"));
-                        const char *desc = json_string_value(json_object_get(meta, "description"));
-                        
-                        printf(COLOR_GREEN "• %s" COLOR_RESET, entry->d_name);
-                        if (version) printf(" v%s", version);
-                        printf("\n");
-                        
-                        if (desc) printf("  %s\n", desc);
-                        
-                        json_decref(meta);
+            // List installed files
+            DIR* dir = opendir(install_dir);
+            if (dir) {
+                printf("📄 Fichiers:\n");
+                struct dirent* entry;
+                int count = 0;
+                while ((entry = readdir(dir)) != NULL) {
+                    if (entry->d_name[0] != '.') {
+                        printf("  - %s\n", entry->d_name);
+                        count++;
                     }
-                } else {
-                    printf(COLOR_YELLOW "• %s" COLOR_RESET " (sans métadonnées)\n", entry->d_name);
                 }
-                
-                count++;
+                closedir(dir);
+                if (count == 0) {
+                    printf("  (aucun fichier visible)\n");
+                }
             }
         }
     }
     
-    closedir(dir);
-    printf("\nTotal: %d paquet(s)\n", count);
-    return count > 0;
-}
-
-/* ============================================================================
- * POINT D'ENTRÉE
- * ============================================================================ */
-
-void print_usage(const char *progname) {
-    printf("\n" COLOR_CYAN "🐧 Zarch Package Manager v%s\n\n" COLOR_RESET, VERSION);
-    printf("Usage: %s <command> [options]\n\n", progname);
-    printf("Commandes:\n");
-    printf("  login <user> <pass>           Connexion au registre\n");
-    printf("  logout                        Déconnexion\n");
-    printf("  whoami                        Affiche l'utilisateur courant\n");
-    printf("  init [path]                   Initialise un nouveau package\n");
-    printf("  build [path]                  Construit le package\n");
-    printf("  publish <path> <code>         Publie le package\n");
-    printf("  install <package>             Installe un package\n");
-    printf("  uninstall <package>           Désinstalle un package\n");
-    printf("  search [query]                Recherche dans le registre\n");
-    printf("  list                          Liste les packages installés\n");
-    printf("  update                        Met à jour l'index local\n");
-    printf("  version                       Affiche la version\n");
-    printf("\nOptions pour 'publish':\n");
-    printf("  --auto-version                Incrémente automatiquement la version\n");
-    printf("  --force                       Force la publication\n");
-    printf("\nExemples:\n");
-    printf("  %s publish . CODE123 --auto-version\n", progname);
-    printf("  %s install @math/calculus\n", progname);
-    printf("  %s search \"json parser\"\n", progname);
-}
-
-int main(int argc, char **argv) {
-    /* Initialisation globale */
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    // Cleanup
+    remove(temp_file);
+    curl_easy_cleanup(curl);
+    free(chunk.memory);
+    json_decref(info);
     
-    if (argc < 2) {
-        print_usage(argv[0]);
+    return 1;
+}
+
+int cmd_search() {
+    print_step("Recherche en cours...");
+    
+    char url[1024];
+    if (strlen(g_args.query) > 0) {
+        snprintf(url, sizeof(url), "%s/api/package/search?q=%s", g_config.api_url, g_args.query);
+    } else {
+        snprintf(url, sizeof(url), "%s/zarch/INDEX", g_config.api_url);
+    }
+    
+    int http_code = 0;
+    json_t* response = api_request(url, "GET", NULL, &http_code);
+    
+    if (!response) {
+        print_error("Échec de la recherche");
+        return 0;
+    }
+    
+    if (g_args.json) {
+        json_print_object(response);
+        json_decref(response);
+        return 1;
+    }
+    
+    if (strlen(g_args.query) > 0) {
+        // Search results
+        json_t* results = json_object_get(response, "results");
+        json_t* count = json_object_get(response, "count");
+        
+        if (json_is_array(results)) {
+            size_t i;
+            json_t* value;
+            int total = json_integer_value(count);
+            
+            printf("\n🔍 Résultats pour \"%s\" (%d trouvés):\n\n", g_args.query, total);
+            
+            json_array_foreach(results, i, value) {
+                const char* name = json_string_value(json_object_get(value, "name"));
+                const char* scope = json_string_value(json_object_get(value, "scope"));
+                const char* version = json_string_value(json_object_get(value, "version"));
+                const char* description = json_string_value(json_object_get(value, "description"));
+                
+                printf("📦 %s%s%s v%s\n", 
+                       COLOR_BOLD,
+                       scope && strcmp(scope, "user") != 0 ? "@" : "",
+                       scope && strcmp(scope, "user") != 0 ? scope : name,
+                       COLOR_RESET);
+                
+                if (scope && strcmp(scope, "user") != 0) {
+                    printf("   Scope: %s/%s\n", scope, name);
+                }
+                
+                printf("   Version: %s\n", version);
+                if (description && strlen(description) > 0) {
+                    printf("   Description: %s\n", description);
+                }
+                printf("\n");
+            }
+        }
+    } else {
+        // Full index
+        json_t* packages = json_object_get(response, "packages");
+        if (json_is_object(packages)) {
+            const char* key;
+            json_t* value;
+            int count = 0;
+            
+            printf("\n📦 Tous les packages disponibles:\n\n");
+            
+            json_object_foreach(packages, key, value) {
+                const char* version = json_string_value(json_object_get(value, "version"));
+                const char* scope = json_string_value(json_object_get(value, "scope"));
+                
+                printf("  %s%s%s v%s\n", 
+                       COLOR_BOLD, key, COLOR_RESET, version);
+                count++;
+            }
+            
+            printf("\nTotal: %d packages\n", count);
+        }
+    }
+    
+    json_decref(response);
+    return 1;
+}
+
+int cmd_list() {
+    char cmd[1024];
+    
+    if (g_args.global) {
+        snprintf(cmd, sizeof(cmd), "ls -la \"%s\"", LIB_PATH);
+    } else {
+        snprintf(cmd, sizeof(cmd), "ls -la \"%s/.zarch/packages\"", getenv("HOME"));
+    }
+    
+    printf("📦 Packages installés:\n\n");
+    system(cmd);
+    return 1;
+}
+
+int cmd_info() {
+    if (strlen(g_args.package_name) == 0) {
+        print_error("Nom du package requis");
+        return 0;
+    }
+    
+    // Parse package name for scope
+    char scope[64] = "user";
+    char name[128];
+    
+    if (g_args.package_name[0] == '@') {
+        char* slash = strchr(g_args.package_name, '/');
+        if (slash) {
+            strncpy(scope, g_args.package_name + 1, slash - g_args.package_name - 1);
+            scope[slash - g_args.package_name - 1] = 0;
+            strncpy(name, slash + 1, sizeof(name) - 1);
+        } else {
+            strcpy(name, g_args.package_name + 1);
+        }
+    } else {
+        strcpy(name, g_args.package_name);
+    }
+    
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/api/package/info/%s/%s", g_config.api_url, scope, name);
+    
+    int http_code = 0;
+    json_t* info = api_request(url, "GET", NULL, &http_code);
+    
+    if (!info || http_code != 200) {
+        print_error("Package non trouvé");
+        if (info) json_decref(info);
+        return 0;
+    }
+    
+    if (g_args.json) {
+        json_print_object(info);
+        json_decref(info);
+        return 1;
+    }
+    
+    printf("\n📦 Informations du package:\n\n");
+    printf("  Nom: %s\n", json_string_value(json_object_get(info, "name")));
+    printf("  Scope: %s\n", json_string_value(json_object_get(info, "scope")));
+    printf("  Dernière version: %s\n", json_string_value(json_object_get(info, "latest_version")));
+    printf("  Description: %s\n", json_string_value(json_object_get(info, "description")));
+    printf("  Auteur: %s\n", json_string_value(json_object_get(info, "author")));
+    printf("  License: %s\n", json_string_value(json_object_get(info, "license")));
+    printf("  Taille: %.2f MB\n", (double)json_integer_value(json_object_get(info, "size")) / (1024*1024));
+    printf("  Téléchargements: %d\n", (int)json_integer_value(json_object_get(info, "downloads")));
+    printf("  Créé le: %s\n", json_string_value(json_object_get(info, "created_at")));
+    printf("  Mis à jour: %s\n", json_string_value(json_object_get(info, "updated_at")));
+    
+    json_t* versions = json_object_get(info, "all_versions");
+    if (json_is_array(versions)) {
+        printf("  Versions disponibles: ");
+        size_t i;
+        json_t* value;
+        json_array_foreach(versions, i, value) {
+            printf("%s%s", i > 0 ? ", " : "", json_string_value(value));
+        }
+        printf("\n");
+    }
+    
+    json_decref(info);
+    return 1;
+}
+
+int cmd_config() {
+    if (strlen(g_args.subcommand) == 0 || strcmp(g_args.subcommand, "list") == 0) {
+        if (g_args.json) {
+            json_t* obj = json_object();
+            json_object_set_new(obj, "username", json_string(g_config.username));
+            json_object_set_new(obj, "email", json_string(g_config.email));
+            json_object_set_new(obj, "default_scope", json_string(g_config.default_scope));
+            json_object_set_new(obj, "api_url", json_string(g_config.api_url));
+            json_object_set_new(obj, "auto_update", json_integer(g_config.auto_update));
+            json_object_set_new(obj, "color_mode", json_integer(g_config.color_mode));
+            json_print_object(obj);
+            json_decref(obj);
+        } else {
+            printf("🔧 Configuration Zarch:\n\n");
+            printf("  Utilisateur: %s\n", g_config.username);
+            printf("  Email: %s\n", g_config.email);
+            printf("  Scope par défaut: %s\n", g_config.default_scope);
+            printf("  URL API: %s\n", g_config.api_url);
+            printf("  Mise à jour auto: %s\n", g_config.auto_update ? "activée" : "désactivée");
+            printf("  Couleurs: %s\n", g_config.color_mode ? "activées" : "désactivées");
+        }
+        return 1;
+    }
+    
+    if (strcmp(g_args.subcommand, "set") == 0) {
+        if (g_args.argc < 5) {
+            print_error("Usage: zarch config set <key> <value>");
+            return 0;
+        }
+        
+        char* key = g_args.argv[3];
+        char* value = g_args.argv[4];
+        
+        if (strcmp(key, "default_scope") == 0) {
+            strncpy(g_config.default_scope, value, sizeof(g_config.default_scope)-1);
+        } else if (strcmp(key, "api_url") == 0) {
+            strncpy(g_config.api_url, value, sizeof(g_config.api_url)-1);
+        } else if (strcmp(key, "color_mode") == 0) {
+            g_config.color_mode = parse_bool_arg(value);
+            g_color_enabled = g_config.color_mode;
+        } else if (strcmp(key, "auto_update") == 0) {
+            g_config.auto_update = parse_bool_arg(value);
+        } else {
+            print_error("Clé de configuration inconnue");
+            return 0;
+        }
+        
+        save_config();
+        print_success("Configuration mise à jour");
+        return 1;
+    }
+    
+    print_error("Sous-commande config inconnue");
+    return 0;
+}
+
+int cmd_update() {
+    print_step("Mise à jour de l'index...");
+    
+    // Simple cache update
+    g_config.last_update = time(NULL);
+    save_config();
+    
+    print_success("Index mis à jour");
+    return 1;
+}
+
+int cmd_clean() {
+    print_step("Nettoyage des caches...");
+    
+    char cmd[1024];
+    
+    // Clean temp files
+    snprintf(cmd, sizeof(cmd), "rm -f /tmp/zarch-* /tmp/*.tar.gz 2>/dev/null");
+    system(cmd);
+    
+    // Clean build cache
+    snprintf(cmd, sizeof(cmd), "rm -rf %s/.zarch/cache 2>/dev/null", getenv("HOME"));
+    system(cmd);
+    
+    print_success("Cache nettoyé");
+    return 1;
+}
+
+// ===== HELP =====
+void show_help() {
+    printf(COLOR_BOLD "🐧 Zarch Package Manager v%s\n\n" COLOR_RESET, VERSION);
+    printf("Usage: zarch <command> [options] [arguments]\n\n");
+    
+    printf(COLOR_BOLD "📦 Gestion des packages:\n" COLOR_RESET);
+    printf("  init [path]              Initialiser un nouveau package\n");
+    printf("  build [path]             Construire le package\n");
+    printf("  publish [path] [code]    Publier le package\n");
+    printf("  install <package>        Installer un package\n");
+    printf("  uninstall <package>      Désinstaller un package\n");
+    printf("  search [query]           Rechercher des packages\n");
+    printf("  list                     Lister les packages installés\n");
+    printf("  info <package>           Informations sur un package\n");
+    printf("  update                   Mettre à jour l'index\n");
+    
+    printf(COLOR_BOLD "\n🔐 Authentification:\n" COLOR_RESET);
+    printf("  login [user] [pass]      Se connecter\n");
+    printf("  logout                   Se déconnecter\n");
+    printf("  whoami                   Afficher l'utilisateur courant\n");
+    
+    printf(COLOR_BOLD "\n⚙️  Configuration:\n" COLOR_RESET);
+    printf("  config list              Lister la configuration\n");
+    printf("  config set <key> <value> Définir une option\n");
+    printf("  clean                    Nettoyer les caches\n");
+    
+    printf(COLOR_BOLD "\n🛠️  Options générales:\n" COLOR_RESET);
+    printf("  -h, --help               Afficher cette aide\n");
+    printf("  -v, --version            Afficher la version\n");
+    printf("  -V, --verbose            Mode verbeux\n");
+    printf("  -q, --quiet              Mode silencieux\n");
+    printf("  -j, --json               Sortie JSON\n");
+    printf("  -f, --force              Forcer l'opération\n");
+    printf("  -y, --yes                Répondre oui à tout\n");
+    printf("  -i, --interactive        Mode interactif\n");
+    
+    printf(COLOR_BOLD "\n📁 Options de chemin:\n" COLOR_RESET);
+    printf("  --path=<path>            Chemin du package\n");
+    printf("  --scope=<scope>          Scope du package\n");
+    printf("  --version=<version>      Version spécifique\n");
+    
+    printf(COLOR_BOLD "\n🎯 Options d'installation:\n" COLOR_RESET);
+    printf("  -g, --global             Installation globale\n");
+    printf("  -l, --local              Installation locale\n");
+    printf("  --no-cache               Désactiver le cache\n");
+    
+    printf(COLOR_BOLD "\n📤 Options de publication:\n" COLOR_RESET);
+    printf("  --auto-version           Auto-incrémenter la version\n");
+    printf("  --tag=<tag>              Tag de version\n");
+    
+    printf(COLOR_BOLD "\n🔍 Options de recherche:\n" COLOR_RESET);
+    printf("  --all                    Tout afficher\n");
+    printf("  --output=<format>        Format de sortie\n");
+    
+    printf(COLOR_BOLD "\n📚 Exemples:\n" COLOR_RESET);
+    printf("  zarch init --interactive\n");
+    printf("  zarch publish . 1234 --auto-version\n");
+    printf("  zarch install @org/math --global\n");
+    printf("  zarch search \"math\" --json | jq .\n");
+    printf("  zarch info swiftvelox -j\n");
+    printf("  zarch config set default_scope myorg\n");
+    printf("  zarch config set color_mode false\n");
+    
+    printf(COLOR_BOLD "\n🌐 Registre: %s\n" COLOR_RESET, REGISTRY_URL);
+}
+
+void show_version() {
+    printf("Zarch CLI v%s\n", VERSION);
+    printf("Registre: %s\n", REGISTRY_URL);
+    printf("Librairie: %s\n", LIB_PATH);
+}
+
+// ===== MAIN =====
+int main(int argc, char** argv) {
+    // Initialize
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    load_config();
+    init_args(&g_args, argc, argv);
+    parse_args(&g_args);
+    
+    // Show header if not quiet
+    if (!g_args.quiet && argc > 1 && !g_args.json) {
+        printf(COLOR_CYAN "🐧 Zarch CLI v%s\n" COLOR_RESET, VERSION);
+    }
+    
+    // Handle special flags
+    if (g_args.help) {
+        show_help();
+        curl_global_cleanup();
+        return 0;
+    }
+    
+    if (g_args.version_flag) {
+        show_version();
+        curl_global_cleanup();
+        return 0;
+    }
+    
+    // Execute command
+    int result = 0;
+    
+    if (strlen(g_args.command) == 0) {
+        show_help();
         curl_global_cleanup();
         return 1;
     }
     
-    const char *command = argv[1];
-    int result = 0;
-    
-    /* Bannière */
-    if (argc > 1) {
-        printf(COLOR_CYAN "\n🐧 Zarch Package Manager v%s\n" COLOR_RESET, VERSION);
-    }
-    
-    /* Dispatch des commandes */
-    if (strcmp(command, "login") == 0 && argc >= 4) {
-        result = cmd_login(argv[2], argv[3]);
-    } else if (strcmp(command, "install") == 0 && argc >= 3) {
-        result = cmd_install(argv[2]);
-    } else if (strcmp(command, "publish") == 0 && argc >= 4) {
-        int auto_version = 0;
-        if (argc >= 5 && strcmp(argv[4], "--auto-version") == 0) {
-            auto_version = 1;
-        }
-        result = cmd_publish(argv[2], argv[3], auto_version);
-    } else if (strcmp(command, "search") == 0) {
-        result = cmd_search(argc >= 3 ? argv[2] : NULL);
-    } else if (strcmp(command, "list") == 0) {
+    if (strcmp(g_args.command, "login") == 0) {
+        result = cmd_login();
+    } else if (strcmp(g_args.command, "logout") == 0) {
+        result = cmd_logout();
+    } else if (strcmp(g_args.command, "whoami") == 0) {
+        result = cmd_whoami();
+    } else if (strcmp(g_args.command, "init") == 0) {
+        result = cmd_init();
+    } else if (strcmp(g_args.command, "build") == 0) {
+        result = cmd_build();
+    } else if (strcmp(g_args.command, "publish") == 0) {
+        result = cmd_publish();
+    } else if (strcmp(g_args.command, "install") == 0) {
+        result = cmd_install();
+    } else if (strcmp(g_args.command, "uninstall") == 0 || strcmp(g_args.command, "remove") == 0) {
+        // Simple uninstall for now
+        print_step("Désinstallation...");
+        char cmd[1024];
+        snprintf(cmd, sizeof(cmd), "rm -rf \"%s/%s\"", LIB_PATH, g_args.package_name);
+        system(cmd);
+        print_success("Package désinstallé");
+        result = 1;
+    } else if (strcmp(g_args.command, "search") == 0) {
+        result = cmd_search();
+    } else if (strcmp(g_args.command, "list") == 0) {
         result = cmd_list();
-    } else if (strcmp(command, "version") == 0) {
-        printf("Version %s\n", VERSION);
-        result = 1;
-    } else if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0) {
-        print_usage(argv[0]);
-        result = 1;
+    } else if (strcmp(g_args.command, "info") == 0) {
+        result = cmd_info();
+    } else if (strcmp(g_args.command, "config") == 0) {
+        result = cmd_config();
+    } else if (strcmp(g_args.command, "update") == 0) {
+        result = cmd_update();
+    } else if (strcmp(g_args.command, "clean") == 0) {
+        result = cmd_clean();
     } else {
-        log_error("Commande non reconnue: %s", command);
-        print_usage(argv[0]);
+        print_error("Commande inconnue: %s", g_args.command);
+        show_help();
         result = 0;
     }
     
+    // Cleanup
     curl_global_cleanup();
+    
+    if (!g_args.quiet && !g_args.json) {
+        printf("\n");
+    }
+    
     return result ? 0 : 1;
 }
