@@ -20,6 +20,7 @@
 #include <grp.h>
 #include <signal.h>
 #include <libgen.h>
+#include <stdarg.h>
 
 #define VERSION "6.0.0"
 #define REGISTRY_URL "https://zenv-hub.onrender.com"
@@ -123,29 +124,59 @@ void print_color(const char* color, const char* icon, const char* format, ...) {
     va_end(args);
 }
 
-void print_step(const char* msg) {
-    print_color(COLOR_BLUE, "🔄", "%s", msg);
+void print_step(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    print_color(COLOR_BLUE, "🔄", "%s", buffer);
 }
 
-void print_success(const char* msg) {
-    print_color(COLOR_GREEN, "✅", "%s", msg);
+void print_success(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    print_color(COLOR_GREEN, "✅", "%s", buffer);
 }
 
-void print_error(const char* msg) {
-    print_color(COLOR_RED, "❌", "%s", msg);
+void print_error(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    print_color(COLOR_RED, "❌", "%s", buffer);
 }
 
-void print_warning(const char* msg) {
-    print_color(COLOR_YELLOW, "⚠️", "%s", msg);
+void print_warning(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    print_color(COLOR_YELLOW, "⚠️", "%s", buffer);
 }
 
-void print_info(const char* msg) {
-    print_color(COLOR_CYAN, "ℹ️", "%s", msg);
+void print_info(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    print_color(COLOR_CYAN, "ℹ️", "%s", buffer);
 }
 
-void print_debug(const char* msg) {
+void print_debug(const char* format, ...) {
     if (g_args.verbose) {
-        print_color(COLOR_GRAY, "🐛", "%s", msg);
+        char buffer[512];
+        va_list args;
+        va_start(args, format);
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        va_end(args);
+        print_color(COLOR_GRAY, "🐛", "%s", buffer);
     }
 }
 
@@ -451,8 +482,8 @@ void parse_args(Args* args) {
         else if (strcmp(args->command, "login") == 0) {
             if (strlen(args->username) == 0) {
                 strncpy(args->username, arg, sizeof(args->username)-1);
-            } else if (strlen(args->password) == 0) {
-                strncpy(args->password, arg, sizeof(args->password)-1);
+            } else if (strlen(args.password) == 0) {
+                strncpy(args.password, arg, sizeof(args.password)-1);
             }
         }
         
@@ -1262,7 +1293,6 @@ int cmd_search() {
             
             json_object_foreach(packages, key, value) {
                 const char* version = json_string_value(json_object_get(value, "version"));
-                const char* scope = json_string_value(json_object_get(value, "scope"));
                 
                 printf("  %s%s%s v%s\n", 
                        COLOR_BOLD, key, COLOR_RESET, version);
