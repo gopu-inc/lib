@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include <time.h>
 #include <ctype.h>
+#include <errno.h>
+#include <dirent.h>
+#include <sys/types.h>
 
 #define VERSION "5.3.0"
 #define REGISTRY_URL "https://zenv-hub.onrender.com"
