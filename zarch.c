@@ -12,11 +12,10 @@
 #include <sys/types.h>
 #include <zlib.h>
 
-#define VERSION "5.7.0"
+#define VERSION "5.8.0"
 #define REGISTRY_URL "https://zenv-hub.onrender.com"
 #define CONFIG_DIR ".zarch"
 #define CONFIG_FILE "config.json"
-#define CACHE_FILE "cache.json"
 #define LIB_PATH "/usr/local/bin/swiftvelox/addws"
 
 #define RESET   "\033[0m"
@@ -51,7 +50,6 @@ typedef struct {
     char path[256];
     int force;
     int verbose;
-    int no_cache;
     int auto_version;
 } Args;
 
@@ -161,7 +159,7 @@ int decode_base85(const char* encoded, unsigned char** decoded, size_t* decoded_
         if (out_pos < *decoded_len) (*decoded)[out_pos++] = (value >> 24) & 0xFF;
         if (count > 1 && out_pos < *decoded_len) (*decoded)[out_pos++] = (value >> 16) & 0xFF;
         if (count > 2 && out_pos < *decoded_len) (*decoded)[out_pos++] = (value >> 8) & 0xFF;
-        if (count > 3 && out_pos < *decoded_len) (*decoded)[out_pos++] = value & 0xFF;
+        if (count > 3 && out_pos < *decoder_len) (*decoded)[out_pos++] = value & 0xFF;
     }
     
     *decoded_len = out_pos;
@@ -171,139 +169,77 @@ int decode_base85(const char* encoded, unsigned char** decoded, size_t* decoded_
 }
 
 // ============================================================================
-// ZLIB DECOMPRESSION
+// ZARCH PACKAGE PROCESSING - VERSION FINALE POUR SWIFTVELOX
 // ============================================================================
 
-int zlib_decompress(const unsigned char* compressed, size_t compressed_len, 
-                    unsigned char** decompressed, size_t* decompressed_len) {
-    if (compressed_len == 0) {
-        return 0;
-    }
+int process_zarch_package(const char* zarch_content, const char* output_dir, const char* pkg_name) {
+    print_step("🔓", "Décodage Zarch...");
     
-    z_stream stream;
-    memset(&stream, 0, sizeof(stream));
+    printf("  Reçu: %zu chars\n", strlen(zarch_content));
     
-    if (inflateInit(&stream) != Z_OK) {
-        return 0;
-    }
-    
-    *decompressed_len = compressed_len * 5;
-    *decompressed = malloc(*decompressed_len);
-    
-    if (!*decompressed) {
-        inflateEnd(&stream);
-        return 0;
-    }
-    
-    stream.next_in = (Bytef*)compressed;
-    stream.avail_in = compressed_len;
-    stream.next_out = *decompressed;
-    stream.avail_out = *decompressed_len;
-    
-    int ret = inflate(&stream, Z_FINISH);
-    
-    if (ret != Z_STREAM_END && ret != Z_OK) {
-        free(*decompressed);
-        inflateEnd(&stream);
-        return 0;
-    }
-    
-    *decompressed_len = stream.total_out;
-    inflateEnd(&stream);
-    
-    return 1;
-}
-
-// ============================================================================
-// ZARCH PACKAGE PROCESSING - VERSION CORRIGÉE
-// ============================================================================
-
-int process_zarch_package(const char* zarch_content, const char* output_dir) {
-    print_step("🔓", "Traitement du paquet Zarch...");
-    
-    printf("  Taille reçue: %zu chars\n", strlen(zarch_content));
-    
-    // 1. Essayer de parser comme JSON
+    // Essayer JSON d'abord
     json_t* root = json_loads(zarch_content, 0, NULL);
     const char* encoded_data = NULL;
     
     if (root) {
         encoded_data = json_string_value(json_object_get(root, "content"));
-        if (!encoded_data) {
-            encoded_data = zarch_content;
-        }
-        printf("  Format: JSON\n");
+        if (!encoded_data) encoded_data = zarch_content;
     } else {
         encoded_data = zarch_content;
-        printf("  Format: Brut\n");
     }
     
-    if (!encoded_data || strlen(encoded_data) < 10) {
-        if (root) json_decref(root);
-        print_error("Données invalides");
-        return 0;
-    }
-    
-    // 2. Décoder Base85
-    print_step("📝", "Décodage Base85...");
+    // Décoder Base85
+    print_step("📝", "Base85 → Binaire...");
     unsigned char* decoded = NULL;
     size_t decoded_len = 0;
     
     if (!decode_base85(encoded_data, &decoded, &decoded_len)) {
         if (root) json_decref(root);
-        print_error("Échec décodage Base85");
+        print_error("Échec décodage");
         return 0;
     }
     
-    if (root) {
-        json_decref(root);
-    }
+    if (root) json_decref(root);
     
-    printf("  Taille décodée: %zu bytes\n", decoded_len);
+    printf("  Décodé: %zu bytes\n", decoded_len);
     
-    // 3. Vérifier le type de contenu
-    int is_archive = 0;
+    // Analyser le type de fichier
+    int is_svlib = 0;
     int is_text = 1;
     
-    for (size_t i = 0; i < (decoded_len < 100 ? decoded_len : 100); i++) {
-        if (decoded[i] < 32 && decoded[i] != '\n' && decoded[i] != '\t' && decoded[i] != '\r') {
-            is_text = 0;
-        }
-        // Vérifier signature tar/gzip
-        if (i < 2 && decoded[0] == 0x1F && decoded[1] == 0x8B) {
-            is_archive = 1; // GZIP
-        }
-    }
-    
-    // 4. Essayer décompression zlib si pas déjà archive
-    if (!is_archive) {
-        print_step("🗜️", "Tentative décompression zlib...");
-        unsigned char* decompressed = NULL;
-        size_t decompressed_len = 0;
-        
-        if (zlib_decompress(decoded, decoded_len, &decompressed, &decompressed_len)) {
-            printf("  Décompressé: %zu → %zu bytes\n", decoded_len, decompressed_len);
-            free(decoded);
-            decoded = decompressed;
-            decoded_len = decompressed_len;
-            
-            // Re-vérifier si c'est une archive maintenant
-            if (decoded_len >= 2 && decoded[0] == 0x1F && decoded[1] == 0x8B) {
-                is_archive = 1;
+    // Vérifier si c'est un .svlib SwiftVelox (format binaire)
+    if (decoded_len >= 4) {
+        // Vérifier les premiers bytes pour identifier le type
+        for (size_t i = 0; i < (decoded_len < 100 ? decoded_len : 100); i++) {
+            if (decoded[i] < 32 && decoded[i] != '\n' && decoded[i] != '\t' && decoded[i] != '\r') {
+                is_text = 0;
             }
-        } else {
-            print_warning("Pas de compression zlib");
+        }
+        
+        // Vérifier signature possible .svlib
+        if (decoded_len > 10 && !is_text) {
+            is_svlib = 1;
         }
     }
     
-    // 5. Sauvegarder le contenu
-    char output_path[512];
-    snprintf(output_path, sizeof(output_path), "%s/package_content", output_dir);
+    // Déterminer l'extension de fichier
+    char output_file[512];
+    if (is_svlib) {
+        snprintf(output_file, sizeof(output_file), "%s/%s.svlib", output_dir, pkg_name);
+        print_step("🔧", "Fichier SwiftVelox (.svlib) détecté");
+    } else if (is_text) {
+        snprintf(output_file, sizeof(output_file), "%s/%s.txt", output_dir, pkg_name);
+        print_step("📄", "Fichier texte détecté");
+    } else {
+        snprintf(output_file, sizeof(output_file), "%s/%s.bin", output_dir, pkg_name);
+        print_step("💾", "Fichier binaire détecté");
+    }
     
-    FILE* f = fopen(output_path, "wb");
+    // Sauvegarder le fichier
+    FILE* f = fopen(output_file, "wb");
     if (!f) {
         free(decoded);
-        print_error("Impossible de créer fichier");
+        print_error("Impossible d'écrire");
         return 0;
     }
     
@@ -311,36 +247,8 @@ int process_zarch_package(const char* zarch_content, const char* output_dir) {
     fclose(f);
     free(decoded);
     
-    // 6. Essayer d'extraire si archive
-    if (is_archive) {
-        print_step("📦", "Extraction archive...");
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "tar -xzf \"%s\" -C \"%s\" 2>/dev/null", output_path, output_dir);
-        
-        if (system(cmd) == 0) {
-            remove(output_path);
-            print_success("Archive extraite");
-        } else {
-            // Essayer tar simple
-            snprintf(cmd, sizeof(cmd), "tar -xf \"%s\" -C \"%s\" 2>/dev/null", output_path, output_dir);
-            if (system(cmd) == 0) {
-                remove(output_path);
-                print_success("Archive tar extraite");
-            } else {
-                print_warning("Pas une archive, contenu brut sauvegardé");
-            }
-        }
-    } else if (is_text) {
-        print_step("📄", "Contenu texte détecté...");
-        // Renommer en .txt pour plus de clarté
-        char txt_path[512];
-        snprintf(txt_path, sizeof(txt_path), "%s/package.txt", output_dir);
-        rename(output_path, txt_path);
-        print_success("Contenu texte sauvegardé");
-    } else {
-        print_step("💾", "Contenu binaire sauvegardé...");
-        print_success("Fichier binaire sauvegardé");
-    }
+    printf("  Sauvegardé: %s\n", output_file);
+    print_success("Paquet installé");
     
     return 1;
 }
@@ -477,6 +385,7 @@ void show_version() {
     printf("Zarch CLI v%s\n", VERSION);
     printf("Registry: %s\n", REGISTRY_URL);
     printf("Library: %s\n", LIB_PATH);
+    printf("Support: SwiftVelox .svlib\n");
 }
 
 // --- LOGIN ---
@@ -559,72 +468,6 @@ void whoami() {
     } else {
         print_error("Not logged in");
     }
-}
-
-// --- INIT ---
-int init_package(const char* path) {
-    print_step("🔄", "Init package...");
-    
-    char manifest[512];
-    snprintf(manifest, sizeof(manifest), "%s/zarch.json", path);
-    
-    if (file_exists(manifest)) {
-        print_warning("zarch.json exists");
-        return 0;
-    }
-    
-    char name[128], version[32], desc[256], author[128], license[32];
-    
-    printf("Name: ");
-    fgets(name, sizeof(name), stdin);
-    name[strcspn(name, "\n")] = 0;
-    
-    printf("Version (1.0.0): ");
-    fgets(version, sizeof(version), stdin);
-    version[strcspn(version, "\n")] = 0;
-    if (!version[0]) strcpy(version, "1.0.0");
-    
-    printf("Description: ");
-    fgets(desc, sizeof(desc), stdin);
-    desc[strcspn(desc, "\n")] = 0;
-    
-    printf("Author: ");
-    fgets(author, sizeof(author), stdin);
-    author[strcspn(author, "\n")] = 0;
-    
-    printf("License (MIT): ");
-    fgets(license, sizeof(license), stdin);
-    license[strcspn(license, "\n")] = 0;
-    if (!license[0]) strcpy(license, "MIT");
-    
-    json_t* root = json_object();
-    json_object_set_new(root, "name", json_string(name));
-    json_object_set_new(root, "version", json_string(version));
-    json_object_set_new(root, "description", json_string(desc));
-    json_object_set_new(root, "author", json_string(author));
-    json_object_set_new(root, "license", json_string(license));
-    json_object_set_new(root, "scope", json_string("user"));
-    
-    char* json_str = json_dumps(root, JSON_INDENT(2));
-    FILE* f = fopen(manifest, "w");
-    if (f) {
-        fprintf(f, "%s", json_str);
-        fclose(f);
-    }
-    
-    json_decref(root);
-    free(json_str);
-    
-    mkdir("src", 0755);
-    
-    FILE* readme = fopen("README.md", "w");
-    if (readme) {
-        fprintf(readme, "# %s\n\n%s\n", name, desc);
-        fclose(readme);
-    }
-    
-    print_success("Package created");
-    return 1;
 }
 
 // --- BUILD ---
@@ -795,7 +638,7 @@ int publish_package(const char* path, const char* personal_code, int force, int 
     return res == CURLE_OK;
 }
 
-// --- INSTALL - VERSION SIMPLIFIÉE ET CORRECTE ---
+// --- INSTALL - VERSION OPTIMISÉE POUR SWIFTVELOX ---
 int install_package(const char* pkg_name) {
     print_step("📥", "Installing...");
     printf("  Package: %s\n", pkg_name);
@@ -836,79 +679,32 @@ int install_package(const char* pkg_name) {
     
     mkdir(target, 0755);
     
-    // Obtenir URL de téléchargement depuis INDEX
+    // Obtenir URL de téléchargement
     CURL *curl = curl_easy_init();
     if (!curl) {
         return 0;
     }
     
     struct MemoryStruct chunk = {malloc(1), 0};
-    char index_url[512];
-    snprintf(index_url, sizeof(index_url), "%s/zarch/INDEX", REGISTRY_URL);
     
-    curl_easy_setopt(curl, CURLOPT_URL, index_url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
-    if (res != CURLE_OK) {
-        print_error("Can't fetch index");
-        curl_easy_cleanup(curl);
-        free(chunk.memory);
-        return 0;
-    }
-    
-    json_t *index = json_loads(chunk.memory, 0, NULL);
-    if (!index) {
-        print_error("Bad index");
-        curl_easy_cleanup(curl);
-        free(chunk.memory);
-        return 0;
-    }
-    
-    // Chercher le package
-    char full_name[256];
-    if (strcmp(scope, "user") == 0) {
-        snprintf(full_name, sizeof(full_name), "%s", name);
-    } else {
-        snprintf(full_name, sizeof(full_name), "@%s/%s", scope, name);
-    }
-    
-    json_t *packages = json_object_get(index, "packages");
-    json_t *pkg = json_object_get(packages, full_name);
-    
-    if (!pkg) {
-        print_error("Not found in registry");
-        json_decref(index);
-        curl_easy_cleanup(curl);
-        free(chunk.memory);
-        return 0;
-    }
-    
-    const char* version = json_string_value(json_object_get(pkg, "version"));
-    printf("  Version: %s\n", version);
-    
-    // URL de téléchargement
+    // Construire l'URL de téléchargement directement
+    // Format: /package/download/<scope>/<name>/latest
     char dl_url[1024];
-    snprintf(dl_url, sizeof(dl_url), "%s/package/download/%s/%s/%s", 
-             REGISTRY_URL, scope, name, version);
-    
-    free(chunk.memory);
-    chunk.memory = malloc(1);
-    chunk.size = 0;
+    snprintf(dl_url, sizeof(dl_url), "%s/package/download/%s/%s/latest", 
+             REGISTRY_URL, scope, name);
     
     curl_easy_setopt(curl, CURLOPT_URL, dl_url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     
     print_step("⬇️", "Downloading...");
     
-    res = curl_easy_perform(curl);
+    CURLcode res = curl_easy_perform(curl);
     
     if (res != CURLE_OK || chunk.size == 0) {
         print_error("Download failed");
-        json_decref(index);
         curl_easy_cleanup(curl);
         free(chunk.memory);
         return 0;
@@ -916,40 +712,39 @@ int install_package(const char* pkg_name) {
     
     printf("  Received: %zu bytes\n", chunk.size);
     
-    // Sauvegarder le contenu brut d'abord pour inspection
-    char raw_file[512];
-    snprintf(raw_file, sizeof(raw_file), "%s/raw.zarch", target);
-    FILE* f = fopen(raw_file, "w");
-    if (f) {
-        fwrite(chunk.memory, 1, chunk.size, f);
-        fclose(f);
-    }
-    
-    // Traiter avec notre fonction corrigée
-    if (process_zarch_package(chunk.memory, target)) {
-        print_success("Installed!");
+    // Traiter le paquet Zarch
+    if (process_zarch_package(chunk.memory, target, name)) {
+        print_success("Installation complete!");
         printf("  Location: %s\n", target);
         
-        // Lister les fichiers
+        // Vérifier le fichier créé
         DIR* dir = opendir(target);
         if (dir) {
             struct dirent* entry;
-            printf("  Files:\n");
+            printf("  Files created:\n");
             while ((entry = readdir(dir)) != NULL) {
                 if (entry->d_name[0] != '.') {
-                    printf("    - %s\n", entry->d_name);
+                    char filepath[512];
+                    snprintf(filepath, sizeof(filepath), "%s/%s", target, entry->d_name);
+                    struct stat st;
+                    if (stat(filepath, &st) == 0) {
+                        printf("    - %s (%zu bytes)\n", entry->d_name, (size_t)st.st_size);
+                    }
                 }
             }
             closedir(dir);
         }
         
-        // Supprimer le fichier raw
-        remove(raw_file);
+        // Pour SwiftVelox, vérifier si c'est un .svlib
+        char svlib_path[512];
+        snprintf(svlib_path, sizeof(svlib_path), "%s/%s.svlib", target, name);
+        if (file_exists(svlib_path)) {
+            printf("  📦 SwiftVelox library ready for import\n");
+        }
     } else {
-        print_warning("Raw content saved in raw.zarch");
+        print_error("Processing failed");
     }
     
-    json_decref(index);
     curl_easy_cleanup(curl);
     free(chunk.memory);
     
@@ -1029,8 +824,8 @@ void search_registry(const char* query) {
     
     json_t *packages = json_object_get(index, "packages");
     
-    printf("\nPackages:\n");
-    printf("----------\n");
+    printf("\n📦 Packages in registry:\n");
+    printf("=====================\n");
     
     const char* key;
     json_t *value;
@@ -1042,7 +837,7 @@ void search_registry(const char* query) {
         value = json_object_iter_value(iter);
         
         if (!query || strstr(key, query)) {
-            printf("%s v%s (%s)\n", 
+            printf("%s v%s (scope: %s)\n", 
                    key,
                    json_string_value(json_object_get(value, "version")),
                    json_string_value(json_object_get(value, "scope")));
@@ -1052,7 +847,7 @@ void search_registry(const char* query) {
         iter = json_object_iter_next(packages, iter);
     }
     
-    printf("\nFound: %d\n", found);
+    printf("\nFound: %d packages\n", found);
     
     json_decref(index);
     curl_easy_cleanup(curl);
@@ -1061,7 +856,7 @@ void search_registry(const char* query) {
 
 // --- LIST ---
 void list_installed() {
-    print_step("📁", "Installed...");
+    print_step("📁", "Installed packages...");
     
     DIR *dir = opendir(LIB_PATH);
     if (!dir) {
@@ -1081,6 +876,23 @@ void list_installed() {
             struct stat st;
             if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
                 printf("• %s\n", entry->d_name);
+                
+                // Lister les fichiers dans le package
+                DIR* pkg_dir = opendir(path);
+                if (pkg_dir) {
+                    struct dirent* pkg_entry;
+                    while ((pkg_entry = readdir(pkg_dir)) != NULL) {
+                        if (pkg_entry->d_name[0] != '.') {
+                            char filepath[512];
+                            snprintf(filepath, sizeof(filepath), "%s/%s", path, pkg_entry->d_name);
+                            struct stat fst;
+                            if (stat(filepath, &fst) == 0) {
+                                printf("  └─ %s (%zu bytes)\n", pkg_entry->d_name, (size_t)fst.st_size);
+                            }
+                        }
+                    }
+                    closedir(pkg_dir);
+                }
                 count++;
             }
         }
@@ -1092,7 +904,7 @@ void list_installed() {
 
 // --- UPDATE ---
 void update_index() {
-    print_step("🔄", "Updating...");
+    print_step("🔄", "Updating index...");
     
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -1111,7 +923,7 @@ void update_index() {
     CURLcode res = curl_easy_perform(curl);
     
     if (res == CURLE_OK) {
-        print_success("Updated");
+        print_success("Index updated");
     } else {
         print_error("Failed");
     }
@@ -1120,7 +932,7 @@ void update_index() {
     free(chunk.memory);
 }
 
-// --- PARSING ARGS --- CORRIGÉ
+// --- PARSING ARGS ---
 void parse_args(int argc, char** argv, Args* args) {
     memset(args, 0, sizeof(Args));
     strcpy(args->path, ".");
@@ -1147,7 +959,7 @@ void parse_args(int argc, char** argv, Args* args) {
                     strcmp(args->command, "uninstall") == 0 ||
                     strcmp(args->command, "remove") == 0 ||
                     strcmp(args->command, "search") == 0) {
-                strncpy(args->package_name, argv[i], sizeof(args->package_name) - 1); // CORRIGÉ ICI
+                strncpy(args->package_name, argv[i], sizeof(args->package_name) - 1);
             }
             else if (strcmp(args->command, "build") == 0) {
                 strncpy(args->path, argv[i], sizeof(args->path) - 1);
@@ -1204,7 +1016,6 @@ int main(int argc, char** argv) {
         int has_code = 0;
         char code[128] = {0};
         
-        // Trouver le code (dernier arg non-option)
         for (int i = argc - 1; i >= 2; i--) {
             if (argv[i][0] != '-') {
                 strcpy(code, argv[i]);
