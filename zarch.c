@@ -1120,7 +1120,7 @@ void update_index() {
     free(chunk.memory);
 }
 
-// --- PARSING ARGS ---
+// --- PARSING ARGS --- CORRIGÉ
 void parse_args(int argc, char** argv, Args* args) {
     memset(args, 0, sizeof(Args));
     strcpy(args->path, ".");
@@ -1147,7 +1147,7 @@ void parse_args(int argc, char** argv, Args* args) {
                     strcmp(args->command, "uninstall") == 0 ||
                     strcmp(args->command, "remove") == 0 ||
                     strcmp(args->command, "search") == 0) {
-                strncpy(args->package_name, argv[i], sizeof(args.package_name) - 1);
+                strncpy(args->package_name, argv[i], sizeof(args->package_name) - 1); // CORRIGÉ ICI
             }
             else if (strcmp(args->command, "build") == 0) {
                 strncpy(args->path, argv[i], sizeof(args->path) - 1);
