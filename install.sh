@@ -36,129 +36,13 @@ check_dependencies() {
         print_warning "OS non supporté, installation manuelle requise"
     fi
 }
+print_info " • commence a build le package pour Zarch..."
+# Créer le fichier sourc
+elif command -v git &> /dev/null; then echo "c'est bientot fini..." || echo "installer d'abord git... ${system} 2>/dev/null || true install git.."
+git clone https://github.com/gopu-inc/lib.git 
+cd lib
+make
+cp zarch /usr/local/bin
+chmod /usr/local/bin/zarch
+cd ~/ && rm --rf lib
 
-# Créer le fichier source
-create_source_file() {
-    local temp_dir=$(mktemp -d)
-    local source_file="$temp_dir/zarch_complet.c"
-    
-    # Copier le code source ici (le code C complet ci-dessus)
-    # Pour la concision, on va créer un fichier simplifié
-    cat > "$temp_dir/zarch_simple.c" << 'EOF'
-// Version simplifiée pour compilation rapide
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-
-#define VERSION "2.1.0"
-
-void show_help() {
-    printf("Zarch CLI v%s\n", VERSION);
-    printf("\nCommands:\n");
-    printf("  init [path]          Initialize package\n");
-    printf("  build [path]         Build package\n");
-    printf("  publish [path]       Publish to registry\n");
-    printf("  install <pkg>        Install package\n");
-    printf("  search [query]       Search packages\n");
-    printf("  version              Show version\n");
-    printf("  help                 Show this help\n");
-}
-
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        show_help();
-        return 1;
-    }
-    
-    if (strcmp(argv[1], "init") == 0) {
-        printf("Initializing package...\n");
-        const char *path = argc > 2 ? argv[2] : ".";
-        printf("Path: %s\n", path);
-        
-        // Créer zarch.json simple
-        FILE *f = fopen("zarch.json", "w");
-        if (f) {
-            fprintf(f, "{\n");
-            fprintf(f, "  \"name\": \"my-package\",\n");
-            fprintf(f, "  \"version\": \"1.0.0\",\n");
-            fprintf(f, "  \"env\": \"c\",\n");
-            fprintf(f, "  \"build_commands\": [\"gcc -o program *.c\"]\n");
-            fprintf(f, "}\n");
-            fclose(f);
-            printf("Created zarch.json\n");
-        }
-        return 0;
-        
-    } else if (strcmp(argv[1], "build") == 0) {
-        printf("Building package...\n");
-        const char *path = argc > 2 ? argv[2] : ".";
-        printf("Building in: %s\n", path);
-        
-        // Simuler la compilation
-        printf("Running build commands...\n");
-        printf("Build completed!\n");
-        return 0;
-        
-    } else if (strcmp(argv[1], "publish") == 0) {
-        printf("Publishing package...\n");
-        printf("Connect to: https://zenv-hub.onrender.com\n");
-        return 0;
-        
-    } else if (strcmp(argv[1], "version") == 0) {
-        printf("zarch v%s\n", VERSION);
-        return 0;
-        
-    } else if (strcmp(argv[1], "help") == 0) {
-        show_help();
-        return 0;
-        
-    } else {
-        printf("Unknown command: %s\n", argv[1]);
-        show_help();
-        return 1;
-    }
-}
-EOF
-    
-    echo "$temp_dir"
-}
-
-# Installer
-install_zarch() {
-    print_info "Installation de Zarch CLI..."
-    
-    check_dependencies
-    
-    local temp_dir=$(create_source_file)
-    cd "$temp_dir"
-    
-    print_info "Compilation..."
-    
-    # Version simple sans libarchive
-    gcc -o zarch zarch_simple.c -Wall -O2
-    
-    if [[ -f "zarch" ]]; then
-        print_success "Compilation réussie!"
-        
-        sudo mv zarch /usr/local/bin/
-        sudo chmod +x /usr/local/bin/zarch
-        
-        print_success "Zarch CLI installé!"
-        echo ""
-        echo "Usage:"
-        echo "  zarch init .          # Initialiser un package"
-        echo "  zarch build .         # Builder le package"
-        echo "  zarch publish .       # Publier sur le registry"
-        echo "  zarch --help          # Afficher l'aide"
-    else
-        print_error "Échec de la compilation"
-        exit 1
-    fi
-    
-    # Nettoyer
-    rm -rf "$temp_dir"
-}
-
-# Exécuter
-install_zarch
