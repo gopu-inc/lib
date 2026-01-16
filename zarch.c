@@ -73,12 +73,6 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-static size_t WriteFileCallback(void *contents, size_t size, size_t nmemb, void *userp) {
-    FILE *file = (FILE *)userp;
-    size_t written = fwrite(contents, size, nmemb, file);
-    return written;
-}
-
 void print_step(const char* icon, const char* msg) {
     printf("%s %s%s%s\n", icon, BLUE, msg, RESET);
 }
@@ -389,9 +383,9 @@ int load_config(Config* config) {
     const char* personal_code = json_string_value(json_object_get(root, "personal_code"));
     
     if (token) strncpy(config->token, token, sizeof(config->token) - 1);
-    if (username) strncpy(config->username, username, sizeof(config.username) - 1);
-    if (email) strncpy(config->email, email, sizeof(config.email) - 1);
-    if (personal_code) strncpy(config->personal_code, personal_code, sizeof(config.personal_code) - 1);
+    if (username) strncpy(config->username, username, sizeof(config->username) - 1);
+    if (email) strncpy(config->email, email, sizeof(config->email) - 1);
+    if (personal_code) strncpy(config->personal_code, personal_code, sizeof(config->personal_code) - 1);
     
     config->last_update = json_integer_value(json_object_get(root, "last_update"));
     
@@ -445,7 +439,7 @@ void increment_version(char* version) {
         major++;
         snprintf(version, 32, "%d.0.0", major);
     } else {
-        snprintf(version, 32, "1.0.%ld", time(NULL) % 1000);
+        snprintf(version, 32, "1.0.%lld", (long long)(time(NULL) % 1000));
     }
 }
 
@@ -1153,7 +1147,7 @@ void parse_args(int argc, char** argv, Args* args) {
                     strcmp(args->command, "uninstall") == 0 ||
                     strcmp(args->command, "remove") == 0 ||
                     strcmp(args->command, "search") == 0) {
-                strncpy(args->package_name, argv[i], sizeof(args->package_name) - 1);
+                strncpy(args->package_name, argv[i], sizeof(args.package_name) - 1);
             }
             else if (strcmp(args->command, "build") == 0) {
                 strncpy(args->path, argv[i], sizeof(args->path) - 1);
