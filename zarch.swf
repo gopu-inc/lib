@@ -175,7 +175,6 @@ func do_link(target, alias) {
 // ============================================================
 
 func do_init() {
-    // CORRECTION: io.exists usage
     io.exists("zarch.json", "has_conf");
     
     if (has_conf == "yes") {
@@ -185,12 +184,12 @@ func do_init() {
     
     var name = weld("Nom du projet: ");
     var version = "1.0.0";
-    var main = "main.swf";
+    var entry_point = "main.swf"; // <--- CHANGEMENT ICI (avant c'était 'var main')
     
     var content = "{\n";
     content = content + '  "name": "' + name + '",\n';
     content = content + '  "version": "' + version + '",\n';
-    content = content + '  "main": "' + main + '"\n';
+    content = content + '  "main": "' + entry_point + '"\n'; // <--- CHANGEMENT ICI
     content = content + "}";
     
     io.write("zarch.json", content);
