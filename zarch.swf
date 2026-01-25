@@ -1,151 +1,247 @@
-// zarch.swf - Le Gestionnaire de Paquets Officiel
-// À exécuter avec : swift zarch.swf [commande] [args]
+// ============================================================
+//  ZARCH - SwiftFlow Package Manager v1.0
+//  (c) 2026 Gopu Inc.
+// ============================================================
 
 import "http";
 import "sys";
 import "io";
 import "json";
-import "net"; // Pour vérifier la connexion si besoin
 
-var API_URL = "https://zenv-hub.onrender.com/api";
-var REGISTRY_DIR = "./zarch_modules";
+// --- CONFIGURATION ---
+var REGISTRY_URL = "https://zenv-hub.onrender.com";
+var MODULES_DIR = "./zarch_modules";
+var LOCK_FILE = "zarch.lock";
 
-// === FONCTIONS UTILITAIRES ===
+// --- COULEURS ANSI ---
+var C_RESET = "\033[0m";
+var C_BOLD = "\033[1m";
+var C_CYAN = "\033[36m";
+var C_GREEN = "\033[32m";
+var C_YELLOW = "\033[33m";
+var C_RED = "\033[31m";
+var C_BLUE = "\033[34m";
 
-func print_header() {
-    print("========================================");
-    print("  ZARCH - Package Manager v1.0");
-    print("========================================");
+// ============================================================
+//  FONCTIONS UTILITAIRES
+// ============================================================
+
+func log_info(msg) {
+    print(C_CYAN, "[INFO] ", C_RESET, msg);
 }
 
-func ensure_registry() {
-    if (io.exists(REGISTRY_DIR) == false) {
-        io.mkdir(REGISTRY_DIR);
+func log_success(msg) {
+    print(C_GREEN, "[OK]   ", C_RESET, msg);
+}
+
+func log_warn(msg) {
+    print(C_YELLOW, "[WARN] ", C_RESET, msg);
+}
+
+func log_error(msg) {
+    print(C_RED, "[FAIL] ", C_RESET, msg);
+    sys.exit(1);
+}
+
+func log_header() {
+    print(C_BLUE, "╔════════════════════════════════════════════╗", C_RESET);
+    print(C_BLUE, "║           ZARCH PACKAGE MANAGER            ║", C_RESET);
+    print(C_BLUE, "║           v1.0.0 - SwiftFlow               ║", C_RESET);
+    print(C_BLUE, "╚════════════════════════════════════════════╝", C_RESET);
+    print("");
+}
+
+// Simule une barre de chargement pour les opérations locales (extraction, link)
+func fake_loading(label) {
+    var width = 20;
+    print(label);
+    // Note: SwiftFlow n'a pas encore de sleep(), donc c'est instantané
+    // mais on affiche la barre complète pour le style
+    print(C_GREEN, "[====================] 100%", C_RESET);
+}
+
+// ============================================================
+//  LOGIQUE D'INSTALLATION
+// ============================================================
+
+func install_package(pkg_name) {
+    // 1. Vérifier/Créer le dossier modules
+    if (io.exists(MODULES_DIR) == false) {
+        io.mkdir(MODULES_DIR);
     }
-}
 
-// === COMMANDES ===
+    print(C_BOLD, "📦 Traitement du paquet : ", pkg_name, C_RESET);
 
-func cmd_install(pkg_name) {
-    ensure_registry();
-    print("📦  Recherche de ", pkg_name, "...");
+    // 2. Interroger l'API (Récupération des métadonnées)
+    var info_url = REGISTRY_URL + "/api/package/info/global/" + pkg_name;
+    log_info("Recherche des métadonnées...");
     
-    // 1. Récupérer les infos du package
-    var url = API_URL + "/package/info/global/" + pkg_name;
-    var json_resp = http.get(url);
+    var json_resp = http.get(info_url);
     
     if (json_resp == null) {
-        print("❌  Erreur: Impossible de contacter le serveur.");
+        // Essayer le scope user si global échoue (ex: @gopu/math)
+        // Pour l'instant on gère le global simple
+        log_error("Paquet introuvable ou erreur réseau.");
         return;
     }
-    
-    // Parser le JSON (via notre helper C)
-    var dl_url = json.get(json_resp, "download_url");
+
+    // 3. Parser la réponse
     var version = json.get(json_resp, "latest_version");
+    var dl_path = json.get(json_resp, "download_url");
+    var desc = json.get(json_resp, "description");
+
+    if (dl_path == null) {
+        log_error("Données du paquet invalides.");
+        return;
+    }
+
+    print("   ℹ️  Version : ", C_GREEN, version, C_RESET);
+    print("   ℹ️  Desc    : ", desc);
+
+    // 4. Téléchargement
+    var full_url = REGISTRY_URL + dl_path;
+    var target_file = MODULES_DIR + "/" + pkg_name + ".tar.gz";
+    var target_dir = MODULES_DIR + "/" + pkg_name;
+
+    print(""); 
+    log_info("Démarrage du téléchargement...");
     
-    if (dl_url == null) {
-        print("❌  Package introuvable : ", pkg_name);
+    // http.download affiche sa propre barre de progression en C
+    var dl_result = http.download(full_url, target_file);
+
+    if (dl_result == "success") {
+        print(""); // Saut de ligne après la barre C
+        log_success("Téléchargement terminé.");
+
+        // 5. Extraction
+        fake_loading("📂 Extraction de l'archive...");
+        
+        // Créer le dossier cible
+        if (io.exists(target_dir) == false) {
+            io.mkdir(target_dir);
+        }
+
+        // Commande système tar
+        var cmd_untar = "tar -xzf " + target_file + " -C " + target_dir;
+        var res = sys.exec(cmd_untar);
+
+        // 6. Nettoyage
+        sys.exec("rm " + target_file);
+
+        // 7. Vérification Entrypoint (post-install)
+        check_entrypoint(target_dir, pkg_name);
+
+        log_success("Paquet installé : " + pkg_name);
+    } else {
+        log_error("Échec du téléchargement.");
+    }
+}
+
+// Vérifie si le paquet a un zarch.json et crée un alias si nécessaire
+func check_entrypoint(dir, pkg_name) {
+    var manifest_path = dir + "/zarch.json";
+    
+    if (io.exists(manifest_path)) {
+        var content = io.read(manifest_path);
+        // Chercher "main" ou "activate" (parsing JSON basique)
+        var main_file = json.get(content, "main");
+        
+        if (main_file != null) {
+            log_info("Configuration de l'alias pour : " + main_file);
+            
+            // Créer un lien symbolique à la racine du projet
+            // ex: ln -s zarch_modules/math/lib.swf math.swf
+            var source = dir + "/" + main_file;
+            var link_name = pkg_name + ".swf";
+            
+            var cmd_link = "ln -sf " + source + " " + link_name;
+            sys.exec(cmd_link);
+            
+            print(C_CYAN, "   🔗 Alias créé : ./", link_name, " -> ", source, C_RESET);
+        }
+    }
+}
+
+// ============================================================
+//  COMMANDE LINK (Manuelle)
+// ============================================================
+
+func do_link(target, alias) {
+    if (alias == null) {
+        log_error("Alias manquant. Usage: zarch link <target> <alias>");
         return;
     }
     
-    print("⬇️   Téléchargement de ", pkg_name, " v", version, "...");
-    
-    // 2. Télécharger l'archive
-    var full_dl_url = "https://zenv-hub.onrender.com" + dl_url;
-    var tar_file = REGISTRY_DIR + "/" + pkg_name + ".tar.gz";
-    
-    var success = http.download(full_dl_url, tar_file);
-    
-    if (success == "success") {
-        print("📦  Extraction...");
-        // Utilisation de tar système pour extraire
-        var cmd = "tar -xzf " + tar_file + " -C " + REGISTRY_DIR;
-        sys.exec(cmd);
-        
-        // Nettoyage
-        sys.exec("rm " + tar_file);
-        
-        print("✅  Installé avec succès : ", pkg_name);
-        
-        // Mise à jour de zarch.json local si nécessaire
-        update_local_config(pkg_name, version);
-        
-    } else {
-        print("❌  Échec du téléchargement.");
-    }
-}
-
-func update_local_config(pkg_name, version) {
-    if (io.exists("zarch.json")) {
-        // TODO: Lire et ajouter la dépendance
-        // Pour l'instant on append juste (MVP)
-        print("📝  Mise à jour de zarch.json (TODO)");
-    }
-}
-
-func cmd_link(entry_point, alias) {
-    print("🔗  Création du lien symbolique...");
-    // Création d'un wrapper .swf qui redirige vers le module
-    // Ou utilisation de ln -s via sys.exec
-    
-    var target = entry_point;
-    var link_name = alias;
-    
-    // Commande système pour créer le lien
-    var cmd = "ln -sf " + target + " " + link_name;
+    var cmd = "ln -sf " + target + " " + alias;
     sys.exec(cmd);
+    log_success("Lien créé : " + alias + " -> " + target);
+}
+
+// ============================================================
+//  COMMANDE INIT
+// ============================================================
+
+func do_init() {
+    if (io.exists("zarch.json")) {
+        log_warn("Un fichier zarch.json existe déjà.");
+        return;
+    }
     
-    print("✅  Lien créé : ", link_name, " -> ", target);
-    print("    Vous pouvez maintenant lancer : swift ", link_name);
+    var name = weld("Nom du projet: ");
+    var version = "1.0.0";
+    var main = "main.swf";
+    
+    // Création manuelle du JSON (SwiftFlow n'a pas encore de json.stringify)
+    var content = "{\n";
+    content = content + '  "name": "' + name + '",\n';
+    content = content + '  "version": "' + version + '",\n';
+    content = content + '  "main": "' + main + '"\n';
+    content = content + "}";
+    
+    io.write("zarch.json", content);
+    log_success("Projet initialisé. Fichier zarch.json créé.");
 }
 
-func cmd_help() {
-    print("Usage: zarch [commande] [arguments]");
-    print("");
-    print("Commandes:");
-    print("  install <package>   Télécharger et installer un package");
-    print("  remove <package>    Supprimer un package");
-    print("  search <query>      Rechercher sur le hub");
-    print("  link <file> <alias> Créer un raccourci global");
-    print("  login               Se connecter au Zenv Hub");
-}
-
-// === POINT D'ENTRÉE ===
+// ============================================================
+//  MAIN
+// ============================================================
 
 main() {
-    print_header();
-    
-    // Récupérer le premier argument (la commande)
+    // Récupérer les arguments
+    // sys.argv(0) est la commande (install, init, etc)
     var cmd = sys.argv(0);
     
     if (cmd == null) {
-        cmd_help();
+        log_header();
+        print("Usage: swift zarch.swf <commande> [args]");
+        print("");
+        print("Commandes:");
+        print("  install <package>   Télécharger et installer un paquet");
+        print("  init                Initialiser un nouveau projet");
+        print("  link <src> <dest>   Créer un lien symbolique manuellement");
+        print("  help                Afficher cette aide");
         return;
     }
-    
+
     if (cmd == "install") {
         var pkg = sys.argv(1);
         if (pkg != null) {
-            cmd_install(pkg);
+            install_package(pkg);
         } else {
-            print("❌  Nom du package manquant.");
+            // TODO: Si pas d'arg, lire zarch.json et tout installer
+            log_error("Veuillez spécifier un paquet.");
         }
-    } 
+    }
+    elif (cmd == "init") {
+        do_init();
+    }
     elif (cmd == "link") {
-        var entry = sys.argv(1);
-        var alias = sys.argv(2);
-        if (entry != null) {
-            if (alias == null) alias = entry; // Par défaut même nom
-            cmd_link(entry, alias);
-        } else {
-            print("❌  Fichier cible manquant.");
-        }
+        do_link(sys.argv(1), sys.argv(2));
     }
     elif (cmd == "help") {
-        cmd_help();
+        log_header();
     }
     else {
-        print("❌  Commande inconnue : ", cmd);
-        cmd_help();
+        log_error("Commande inconnue : " + cmd);
     }
 }
