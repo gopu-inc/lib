@@ -46,12 +46,8 @@ func log_header() {
     print("");
 }
 
-// Simule une barre de chargement pour les opérations locales (extraction, link)
 func fake_loading(label) {
-    var width = 20;
     print(label);
-    // Note: SwiftFlow n'a pas encore de sleep(), donc c'est instantané
-    // mais on affiche la barre complète pour le style
     print(C_GREEN, "[====================] 100%", C_RESET);
 }
 
@@ -61,21 +57,23 @@ func fake_loading(label) {
 
 func install_package(pkg_name) {
     // 1. Vérifier/Créer le dossier modules
-    if (io.exists(MODULES_DIR) == false) {
+    // CORRECTION: io.exists est un statement, pas une expression
+    io.exists(MODULES_DIR, "has_modules_dir");
+    
+    if (has_modules_dir == "no") {
         io.mkdir(MODULES_DIR);
     }
 
     print(C_BOLD, "📦 Traitement du paquet : ", pkg_name, C_RESET);
 
-    // 2. Interroger l'API (Récupération des métadonnées)
+    // 2. Interroger l'API
     var info_url = REGISTRY_URL + "/api/package/info/global/" + pkg_name;
     log_info("Recherche des métadonnées...");
     
+    // http.get est une expression (définie dans primary()), donc on peut l'assigner
     var json_resp = http.get(info_url);
     
     if (json_resp == null) {
-        // Essayer le scope user si global échoue (ex: @gopu/math)
-        // Pour l'instant on gère le global simple
         log_error("Paquet introuvable ou erreur réseau.");
         return;
     }
@@ -101,29 +99,28 @@ func install_package(pkg_name) {
     print(""); 
     log_info("Démarrage du téléchargement...");
     
-    // http.download affiche sa propre barre de progression en C
     var dl_result = http.download(full_url, target_file);
 
     if (dl_result == "success") {
-        print(""); // Saut de ligne après la barre C
+        print(""); 
         log_success("Téléchargement terminé.");
 
         // 5. Extraction
         fake_loading("📂 Extraction de l'archive...");
         
-        // Créer le dossier cible
-        if (io.exists(target_dir) == false) {
+        // CORRECTION: io.exists usage
+        io.exists(target_dir, "has_target");
+        if (has_target == "no") {
             io.mkdir(target_dir);
         }
 
-        // Commande système tar
         var cmd_untar = "tar -xzf " + target_file + " -C " + target_dir;
-        var res = sys.exec(cmd_untar);
+        sys.exec(cmd_untar);
 
         // 6. Nettoyage
         sys.exec("rm " + target_file);
 
-        // 7. Vérification Entrypoint (post-install)
+        // 7. Vérification Entrypoint
         check_entrypoint(target_dir, pkg_name);
 
         log_success("Paquet installé : " + pkg_name);
@@ -132,20 +129,21 @@ func install_package(pkg_name) {
     }
 }
 
-// Vérifie si le paquet a un zarch.json et crée un alias si nécessaire
 func check_entrypoint(dir, pkg_name) {
     var manifest_path = dir + "/zarch.json";
     
-    if (io.exists(manifest_path)) {
-        var content = io.read(manifest_path);
-        // Chercher "main" ou "activate" (parsing JSON basique)
+    // CORRECTION: io.exists usage
+    io.exists(manifest_path, "has_manifest");
+    
+    if (has_manifest == "yes") {
+        // CORRECTION: io.read stocke dans la variable passée en 2eme argument
+        io.read(manifest_path, "content");
+        
         var main_file = json.get(content, "main");
         
         if (main_file != null) {
             log_info("Configuration de l'alias pour : " + main_file);
             
-            // Créer un lien symbolique à la racine du projet
-            // ex: ln -s zarch_modules/math/lib.swf math.swf
             var source = dir + "/" + main_file;
             var link_name = pkg_name + ".swf";
             
@@ -158,7 +156,7 @@ func check_entrypoint(dir, pkg_name) {
 }
 
 // ============================================================
-//  COMMANDE LINK (Manuelle)
+//  COMMANDE LINK
 // ============================================================
 
 func do_link(target, alias) {
@@ -177,7 +175,10 @@ func do_link(target, alias) {
 // ============================================================
 
 func do_init() {
-    if (io.exists("zarch.json")) {
+    // CORRECTION: io.exists usage
+    io.exists("zarch.json", "has_conf");
+    
+    if (has_conf == "yes") {
         log_warn("Un fichier zarch.json existe déjà.");
         return;
     }
@@ -186,7 +187,6 @@ func do_init() {
     var version = "1.0.0";
     var main = "main.swf";
     
-    // Création manuelle du JSON (SwiftFlow n'a pas encore de json.stringify)
     var content = "{\n";
     content = content + '  "name": "' + name + '",\n';
     content = content + '  "version": "' + version + '",\n';
@@ -202,8 +202,6 @@ func do_init() {
 // ============================================================
 
 main() {
-    // Récupérer les arguments
-    // sys.argv(0) est la commande (install, init, etc)
     var cmd = sys.argv(0);
     
     if (cmd == null) {
@@ -223,7 +221,6 @@ main() {
         if (pkg != null) {
             install_package(pkg);
         } else {
-            // TODO: Si pas d'arg, lire zarch.json et tout installer
             log_error("Veuillez spécifier un paquet.");
         }
     }
