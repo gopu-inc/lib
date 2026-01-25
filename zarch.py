@@ -68,13 +68,40 @@ class ZarchManager:
             try:
                 MODULES_DIR.mkdir(parents=True, exist_ok=True)
             except PermissionError:
-                pass # On gérera l'erreur au moment de l'écriture
+                pass 
 
         # Création dossier config utilisateur
         if not USER_CONFIG_DIR.exists():
             USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- AUTHENTIFICATION ---
+    def register(self, username, password, email=""):
+        log_step("AUTH", f"Creating account for {username}...")
+        
+        try:
+            payload = {"username": username, "password": password, "email": email}
+            response = self.session.post(f"{REGISTRY_URL}/api/auth/register", json=payload)
+            
+            if response.status_code == 200:
+                data = response.json()
+                token = data.get("token")
+                
+                # Sauvegarde locale automatique après inscription
+                creds = {"username": username, "token": token, "login_time": time.time()}
+                with open(CREDENTIALS_FILE, 'w') as f:
+                    json.dump(creds, f)
+                
+                log_success("Account created and logged in successfully.")
+            else:
+                try:
+                    err = response.json().get('error', response.text)
+                except:
+                    err = response.text
+                log_error(f"Registration failed: {err}")
+                
+        except requests.RequestException as e:
+            log_error(f"Connection failed: {e}")
+
     def login(self, username, password):
         log_step("AUTH", f"Authenticating as {username}...")
         
@@ -202,21 +229,18 @@ class ZarchManager:
         log_info("Compressing package files...")
         
         with tarfile.open(tar_path, "w:gz") as tar:
-            # On parcourt le dossier courant
             for root, dirs, files in os.walk("."):
-                # Exclusions
                 if "dist" in root or ".git" in root or "__pycache__" in root:
                     continue
                 
                 for file in files:
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, ".")
-                    if rel_path == tar_filename: continue # Ne pas s'inclure soi-même
+                    if rel_path == tar_filename: continue
                     
                     tar.add(full_path, arcname=rel_path)
                     lock_data["files_included"].append(rel_path)
 
-        # Ecriture du lockfile
         with open(LOCK_FILE_NAME, 'w') as f:
             json.dump(lock_data, f, indent=4)
         
@@ -226,12 +250,10 @@ class ZarchManager:
 
     # --- CMD: PUBLISH ---
     def publish_package(self, file_pattern=None):
-        # 1. Vérifier Authentification
         token = self._get_token()
         if not token:
-            log_error("You must be logged in to publish. Use 'zarch login'.")
+            log_error("You must be logged in to publish. Use 'zarch login' or 'zarch register'.")
 
-        # 2. Lire config pour métadonnées
         if not Path(CONFIG_FILE_NAME).exists():
             log_error("zarch.json required for publishing.")
         
@@ -243,14 +265,11 @@ class ZarchManager:
         desc = config.get("description", "")
         scope = config.get("scope", "user")
 
-        # 3. Trouver le fichier
         if not file_pattern:
-            # Par défaut, cherche dans dist/ le fichier correspondant à la version
             target_file = f"dist/{name}-v{version}.tar.gz"
             if os.path.exists(target_file):
                 file_path = target_file
             else:
-                # Sinon prend le premier tar.gz
                 files = glob.glob("dist/*.tar.gz")
                 if not files:
                     log_error(f"No package found in dist/ for v{version}. Run 'zarch build' first.")
@@ -264,18 +283,13 @@ class ZarchManager:
         
         try:
             with open(file_path, 'rb') as f:
-                # Important: On envoie le token dans le header
-                headers = {
-                    'Authorization': f'Bearer {token}'
-                }
-                
-                # Le serveur attend 'file' pour le binaire et d'autres champs form-data
+                headers = {'Authorization': f'Bearer {token}'}
                 files = {'file': (os.path.basename(file_path), f, 'application/gzip')}
                 data = {
                     'version': version,
                     'description': desc,
                     'license': config.get('license', 'MIT'),
-                    'personal_code': 'CLI_AUTO' # Le serveur demande un code, on peut le bypasser si le token est valide ou le demander
+                    'personal_code': 'CLI_AUTO'
                 }
                 
                 print(f"{Colors.CYAN}[UPLOADING]{Colors.RESET} Sending data...")
@@ -308,7 +322,6 @@ class ZarchManager:
         
         log_step("INSTALL", f"Resolving {package_name}...")
 
-        # 1. Info
         try:
             resp = self.session.get(f"{REGISTRY_URL}/api/package/info/{scope}/{name}")
             if resp.status_code != 200:
@@ -322,7 +335,6 @@ class ZarchManager:
         except Exception as e:
             log_error(f"Network error: {e}")
 
-        # 2. Download
         tmp_file = f"/tmp/{name}-{version}.tar.gz"
         install_target = MODULES_DIR / name
         
@@ -336,7 +348,6 @@ class ZarchManager:
                         f.write(chunk)
                         progress_bar(dl, total_len, prefix=f"{Colors.CYAN}[DOWNLOAD]{Colors.RESET}")
             
-            # 3. Extract
             log_info(f"Extracting to {install_target}...")
             
             if install_target.exists():
@@ -388,6 +399,12 @@ def main():
     parser = argparse.ArgumentParser(prog="zarch", description="Zarch Package Manager v3.1")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
+    # REGISTER (NOUVEAU)
+    parser_reg = subparsers.add_parser("register", help="Create an account")
+    parser_reg.add_argument("-name", dest="username", required=True, help="Username")
+    parser_reg.add_argument("-password", dest="password", required=True, help="Password")
+    parser_reg.add_argument("-email", dest="email", default="", help="Optional Email")
+
     # LOGIN
     parser_login = subparsers.add_parser("login", help="Authenticate with registry")
     parser_login.add_argument("-name", dest="username", required=True, help="Username")
@@ -416,14 +433,12 @@ def main():
     parser_link.add_argument("file", help="Path to .swf file")
     parser_link.add_argument("--as", dest="alias", help="Import alias")
 
-    # SEARCH
-    parser_search = subparsers.add_parser("search", help="Search packages")
-    parser_search.add_argument("query", help="Search term")
-
     args = parser.parse_args()
     manager = ZarchManager()
 
-    if args.command == "login":
+    if args.command == "register":
+        manager.register(args.username, args.password, args.email)
+    elif args.command == "login":
         manager.login(args.username, args.password)
     elif args.command == "logout":
         manager.logout()
@@ -437,9 +452,6 @@ def main():
         manager.install(args.package)
     elif args.command == "link":
         manager.link_file(args.file, args.alias)
-    elif args.command == "search":
-        # Note: Implement search logic similar to install but with search endpoint
-        print(f"{Colors.BLUE}[INFO]{Colors.RESET} Search feature requires API implementation update.")
     else:
         parser.print_help()
 
