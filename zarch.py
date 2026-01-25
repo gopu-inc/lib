@@ -5,16 +5,21 @@ import json
 import shutil
 import time
 import tarfile
-import hashlib
 import requests
 import argparse
+import glob
 from pathlib import Path
 
 # --- Configuration ---
 REGISTRY_URL = "https://zenv-hub.onrender.com"
 MODULES_DIR = Path("/usr/local/lib/swift")
-LOCK_FILE = Path("zarch.lock")
-CONFIG_FILE = Path("zarch.json")
+USER_CONFIG_DIR = Path.home() / ".zarch"
+CREDENTIALS_FILE = USER_CONFIG_DIR / "credentials.json"
+
+# Fichiers projet
+LOCK_FILE_NAME = "zarch.lock.json"
+CONFIG_FILE_NAME = "zarch.json"
+DEP_FILE_NAME = "SwiftList.txt"
 
 # --- Couleurs ANSI ---
 class Colors:
@@ -42,68 +47,257 @@ def log_error(msg):
 def log_warning(msg):
     print(f"{Colors.YELLOW}[WARNING]{Colors.RESET} {msg}")
 
-def progress_bar(current, total, prefix="", length=30):
+def log_step(step, msg):
+    print(f"{Colors.MAGENTA}[{step}]{Colors.RESET} {msg}")
+
+def progress_bar(current, total, prefix="", length=40):
+    if total == 0: total = 1
     percent = float(current) * 100 / total
-    arrow = '=' * int(percent/100 * length - 1) + '>'
-    spaces = ' ' * (length - len(arrow))
-    
-    print(f"\r{prefix} [{arrow}{spaces}] {int(percent)}%", end='', flush=True)
-    if current == total:
+    filled = int(length * current // total)
+    bar = '=' * filled + '-' * (length - filled)
+    print(f"\r{prefix} [{bar}] {percent:.1f}%", end='', flush=True)
+    if current >= total:
         print()
 
-# --- Gestionnaire de Paquets ---
+# --- Gestionnaire Zarch ---
 class ZarchManager:
     def __init__(self):
         self.session = requests.Session()
-        # Assurer que le dossier des modules existe
+        # Création du dossier système si nécessaire
         if not MODULES_DIR.exists():
             try:
                 MODULES_DIR.mkdir(parents=True, exist_ok=True)
             except PermissionError:
-                log_error(f"Permission denied creating {MODULES_DIR}. Try using sudo.")
+                pass # On gérera l'erreur au moment de l'écriture
 
-    def _get_installed_packages(self):
-        """Lit le fichier lock pour connaître les paquets installés."""
-        if not LOCK_FILE.exists():
-            return {}
+        # Création dossier config utilisateur
+        if not USER_CONFIG_DIR.exists():
+            USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # --- AUTHENTIFICATION ---
+    def login(self, username, password):
+        log_step("AUTH", f"Authenticating as {username}...")
+        
         try:
-            with open(LOCK_FILE, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return {}
-
-    def _save_lock_file(self, data):
-        """Sauvegarde l'état des paquets installés."""
-        with open(LOCK_FILE, 'w') as f:
-            json.dump(data, f, indent=4)
-
-    def search(self, query):
-        """Recherche un paquet sur le registre."""
-        print(f"{Colors.CYAN}[SEARCH]{Colors.RESET} Searching for '{query}'...")
-        try:
-            response = self.session.get(f"{REGISTRY_URL}/api/package/search", params={'q': query})
-            response.raise_for_status()
-            data = response.json()
+            payload = {"username": username, "password": password}
+            response = self.session.post(f"{REGISTRY_URL}/api/auth/login", json=payload)
             
-            if not data.get('results'):
-                log_warning("No packages found.")
-                return
-
-            print(f"\nFound {data['total']} package(s):")
-            for pkg in data['results']:
-                name = pkg['name']
-                scope = pkg['scope']
-                version = pkg['version']
-                desc = pkg.get('description', 'No description')
-                full_name = f"@{scope}/{name}" if scope != 'user' else name
-                print(f"  {Colors.BOLD}{full_name}{Colors.RESET} ({version}) - {desc}")
+            if response.status_code == 200:
+                data = response.json()
+                token = data.get("token")
+                
+                # Sauvegarde locale
+                creds = {"username": username, "token": token, "login_time": time.time()}
+                with open(CREDENTIALS_FILE, 'w') as f:
+                    json.dump(creds, f)
+                
+                log_success("Logged in successfully.")
+            else:
+                try:
+                    err = response.json().get('error', 'Unknown error')
+                except:
+                    err = response.text
+                log_error(f"Login failed: {err}")
                 
         except requests.RequestException as e:
-            log_error(f"Network error: {e}")
+            log_error(f"Connection failed: {e}")
 
+    def logout(self):
+        if CREDENTIALS_FILE.exists():
+            CREDENTIALS_FILE.unlink()
+            log_success("Logged out. Credentials removed.")
+        else:
+            log_warning("No active session found.")
+
+    def _get_token(self):
+        if not CREDENTIALS_FILE.exists():
+            return None
+        try:
+            with open(CREDENTIALS_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get("token")
+        except:
+            return None
+
+    # --- CMD: INIT ---
+    def init_project(self, project_name=None):
+        if not project_name:
+            project_name = input("Project name: ").strip()
+            if not project_name: log_error("Project name is required")
+
+        root_path = Path(project_name)
+        if root_path.exists():
+            log_error(f"Directory '{project_name}' already exists.")
+
+        log_step("INIT", f"Creating project structure for '{project_name}'...")
+
+        try:
+            root_path.mkdir(parents=True)
+            (root_path / "src").mkdir()
+        except OSError as e:
+            log_error(f"Failed to create directories: {e}")
+
+        # zarch.json
+        config = {
+            "name": project_name,
+            "version": "1.0.0",
+            "description": "A SwiftFlow package",
+            "main": "src/main.swf",
+            "author": "",
+            "license": "MIT",
+            "scope": "user",
+            "build": "all"
+        }
+        with open(root_path / CONFIG_FILE_NAME, 'w') as f:
+            json.dump(config, f, indent=4)
+
+        # SwiftList.txt
+        with open(root_path / DEP_FILE_NAME, 'w') as f:
+            f.write("# SwiftList - Dependencies\n")
+
+        # Fichier source par défaut
+        with open(root_path / "src/main.swf", 'w') as f:
+            f.write(f"// Package: {project_name}\nprint(\"Package {project_name} loaded\");\n")
+
+        log_success(f"Project '{project_name}' initialized.")
+        print(f"  {Colors.WHITE}cd {project_name}{Colors.RESET}")
+
+    # --- CMD: BUILD ---
+    def build_package(self):
+        if not Path(CONFIG_FILE_NAME).exists():
+            log_error(f"{CONFIG_FILE_NAME} not found. Are you in a Zarch project?")
+
+        # 1. Lecture Config
+        try:
+            with open(CONFIG_FILE_NAME, 'r') as f:
+                config = json.load(f)
+        except json.JSONDecodeError:
+            log_error("Invalid JSON in configuration file.")
+
+        name = config.get("name")
+        version = config.get("version")
+        build_mode = config.get("build", "none")
+        
+        if build_mode != "all":
+            log_warning(f"Build mode is set to '{build_mode}'. Skipping build.")
+            return
+
+        log_step("BUILD", f"Building {name} v{version}...")
+
+        # 2. Préparation DIST
+        dist_dir = Path("dist")
+        if dist_dir.exists():
+            shutil.rmtree(dist_dir)
+        dist_dir.mkdir()
+
+        # 3. Génération Lockfile
+        lock_data = config.copy()
+        lock_data["built_at"] = time.time()
+        lock_data["files_included"] = []
+        
+        # 4. Compression .tar.gz
+        tar_filename = f"{name}-v{version}.tar.gz"
+        tar_path = dist_dir / tar_filename
+
+        log_info("Compressing package files...")
+        
+        with tarfile.open(tar_path, "w:gz") as tar:
+            # On parcourt le dossier courant
+            for root, dirs, files in os.walk("."):
+                # Exclusions
+                if "dist" in root or ".git" in root or "__pycache__" in root:
+                    continue
+                
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, ".")
+                    if rel_path == tar_filename: continue # Ne pas s'inclure soi-même
+                    
+                    tar.add(full_path, arcname=rel_path)
+                    lock_data["files_included"].append(rel_path)
+
+        # Ecriture du lockfile
+        with open(LOCK_FILE_NAME, 'w') as f:
+            json.dump(lock_data, f, indent=4)
+        
+        sz = tar_path.stat().st_size / 1024
+        log_success(f"Build complete: dist/{tar_filename} ({sz:.2f} KB)")
+        log_info(f"Lockfile generated: {LOCK_FILE_NAME}")
+
+    # --- CMD: PUBLISH ---
+    def publish_package(self, file_pattern=None):
+        # 1. Vérifier Authentification
+        token = self._get_token()
+        if not token:
+            log_error("You must be logged in to publish. Use 'zarch login'.")
+
+        # 2. Lire config pour métadonnées
+        if not Path(CONFIG_FILE_NAME).exists():
+            log_error("zarch.json required for publishing.")
+        
+        with open(CONFIG_FILE_NAME, 'r') as f:
+            config = json.load(f)
+
+        name = config.get("name")
+        version = config.get("version")
+        desc = config.get("description", "")
+        scope = config.get("scope", "user")
+
+        # 3. Trouver le fichier
+        if not file_pattern:
+            # Par défaut, cherche dans dist/ le fichier correspondant à la version
+            target_file = f"dist/{name}-v{version}.tar.gz"
+            if os.path.exists(target_file):
+                file_path = target_file
+            else:
+                # Sinon prend le premier tar.gz
+                files = glob.glob("dist/*.tar.gz")
+                if not files:
+                    log_error(f"No package found in dist/ for v{version}. Run 'zarch build' first.")
+                file_path = files[0]
+        else:
+            file_path = file_pattern
+
+        log_step("PUBLISH", f"Uploading {file_path} to {REGISTRY_URL}...")
+        
+        upload_url = f"{REGISTRY_URL}/api/package/upload/{scope}/{name}"
+        
+        try:
+            with open(file_path, 'rb') as f:
+                # Important: On envoie le token dans le header
+                headers = {
+                    'Authorization': f'Bearer {token}'
+                }
+                
+                # Le serveur attend 'file' pour le binaire et d'autres champs form-data
+                files = {'file': (os.path.basename(file_path), f, 'application/gzip')}
+                data = {
+                    'version': version,
+                    'description': desc,
+                    'license': config.get('license', 'MIT'),
+                    'personal_code': 'CLI_AUTO' # Le serveur demande un code, on peut le bypasser si le token est valide ou le demander
+                }
+                
+                print(f"{Colors.CYAN}[UPLOADING]{Colors.RESET} Sending data...")
+                
+                response = self.session.post(upload_url, headers=headers, files=files, data=data)
+                
+                if response.status_code == 200:
+                    log_success(f"Published successfully!")
+                    print(f"  Package: {name}@{version}")
+                    print(f"  URL: {REGISTRY_URL}/package/{scope}/{name}")
+                else:
+                    try:
+                        err = response.json().get('error', response.text)
+                    except:
+                        err = response.text
+                    log_error(f"Upload failed ({response.status_code}): {err}")
+
+        except requests.RequestException as e:
+            log_error(f"Connection failed: {e}")
+
+    # --- CMD: INSTALL ---
     def install(self, package_name):
-        """Installe un paquet."""
-        # Parsing du nom (supporte @scope/pkg ou pkg)
         scope = "user"
         name = package_name
         
@@ -111,222 +305,141 @@ class ZarchManager:
             parts = package_name[1:].split("/")
             if len(parts) == 2:
                 scope, name = parts
-            else:
-                log_error("Invalid package format. Use @scope/name or name.")
+        
+        log_step("INSTALL", f"Resolving {package_name}...")
 
-        print(f"{Colors.YELLOW}[INSTALL]{Colors.RESET} Resolving {name}...")
-
-        # 1. Récupérer les infos du paquet
+        # 1. Info
         try:
-            info_url = f"{REGISTRY_URL}/api/package/info/{scope}/{name}"
-            resp = self.session.get(info_url)
-            
-            if resp.status_code == 404:
-                log_error(f"Package '{package_name}' not found.")
-            resp.raise_for_status()
+            resp = self.session.get(f"{REGISTRY_URL}/api/package/info/{scope}/{name}")
+            if resp.status_code != 200:
+                log_error(f"Package not found on registry.")
             
             pkg_info = resp.json()
             version = pkg_info['latest_version']
-            download_url = f"{REGISTRY_URL}{pkg_info['download_url']}"
+            dl_url = f"{REGISTRY_URL}{pkg_info['download_url']}"
             
-            print(f"{Colors.CYAN}[INFO]{Colors.RESET} Found version {version}")
+            log_info(f"Found version {version}")
+        except Exception as e:
+            log_error(f"Network error: {e}")
 
-        except requests.RequestException as e:
-            log_error(f"Failed to fetch package info: {e}")
-
-        # 2. Téléchargement avec barre de progression
-        tar_path = Path(f"/tmp/{name}-{version}.tar.gz")
-        install_path = MODULES_DIR / name
+        # 2. Download
+        tmp_file = f"/tmp/{name}-{version}.tar.gz"
+        install_target = MODULES_DIR / name
         
         try:
-            with self.session.get(download_url, stream=True) as r:
-                r.raise_for_status()
-                total_size = int(r.headers.get('content-length', 0))
-                block_size = 8192
-                downloaded = 0
-                
-                with open(tar_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=block_size):
-                        downloaded += len(chunk)
+            with self.session.get(dl_url, stream=True) as r:
+                total_len = int(r.headers.get('content-length', 0))
+                dl = 0
+                with open(tmp_file, 'wb') as f:
+                    for chunk in r.iter_content(8192):
+                        dl += len(chunk)
                         f.write(chunk)
-                        progress_bar(downloaded, total_size, prefix=f"{Colors.MAGENTA}[DOWNLOAD]{Colors.RESET}")
+                        progress_bar(dl, total_len, prefix=f"{Colors.CYAN}[DOWNLOAD]{Colors.RESET}")
             
-            # 3. Extraction
-            print(f"{Colors.BLUE}[EXTRACT]{Colors.RESET} Unpacking to {install_path}...")
+            # 3. Extract
+            log_info(f"Extracting to {install_target}...")
             
-            if install_path.exists():
-                shutil.rmtree(install_path)
-            install_path.mkdir(parents=True, exist_ok=True)
-            
-            with tarfile.open(tar_path, "r:gz") as tar:
-                tar.extractall(path=install_path)
-                
-            # Nettoyage
-            tar_path.unlink()
-            
-            # 4. Mise à jour du fichier lock
-            lock_data = self._get_installed_packages()
-            lock_data[package_name] = {
-                "version": version,
-                "path": str(install_path),
-                "installed_at": time.time()
-            }
-            self._save_lock_file(lock_data)
-            
-            log_success(f"Package {package_name} installed successfully!")
-            
-            # Auto-link si configuré
-            self._link_package(install_path, name)
+            if install_target.exists():
+                try:
+                    shutil.rmtree(install_target)
+                except PermissionError:
+                    log_error(f"Permission denied. Run with sudo.")
+
+            try:
+                install_target.mkdir(parents=True, exist_ok=True)
+                with tarfile.open(tmp_file, "r:gz") as tar:
+                    tar.extractall(install_target)
+            except PermissionError:
+                log_error(f"Permission denied writing to {install_target}. Run with sudo.")
+
+            os.remove(tmp_file)
+            log_success(f"Package {package_name} installed.")
 
         except Exception as e:
-            if tar_path.exists(): tar_path.unlink()
-            log_error(f"Installation failed: {e}")
+            log_error(f"Install failed: {e}")
 
-    def _link_package(self, pkg_path, pkg_name):
-        """Lie le paquet au système SwiftFlow."""
-        manifest_path = pkg_path / "zarch.json"
-        if not manifest_path.exists():
-            log_warning("No zarch.json found, skipping link.")
-            return
-
-        try:
-            with open(manifest_path) as f:
-                config = json.load(f)
-            
-            main_file = config.get("main")
-            if not main_file:
-                return
-
-            source = pkg_path / main_file
-            
-            # Création du lien symbolique ou copie vers le path système si nécessaire
-            # Ici on simule l'enregistrement dans un fichier de configuration global pour Swift
-            # ou on crée un alias
-            
-            print(f"{Colors.CYAN}[LINKING]{Colors.RESET} Linking {pkg_name}...")
-            
-            # Exemple : Création d'un lien dans /usr/local/bin si c'est un binaire/script
-            # ou mise à jour d'un fichier de mapping pour l'import
-            
-            log_success(f"Linked {pkg_name} -> {source}")
-
-        except Exception as e:
-            log_warning(f"Linking failed: {e}")
-
-    def remove(self, package_name):
-        """Supprime un paquet."""
-        lock_data = self._get_installed_packages()
-        
-        if package_name not in lock_data:
-            log_error(f"Package {package_name} is not installed.")
-            
-        print(f"{Colors.YELLOW}[REMOVE]{Colors.RESET} Removing {package_name}...")
-        
-        pkg_data = lock_data[package_name]
-        path = Path(pkg_data["path"])
-        
-        try:
-            if path.exists():
-                shutil.rmtree(path)
-            
-            del lock_data[package_name]
-            self._save_lock_file(lock_data)
-            
-            log_success(f"Package {package_name} removed.")
-        except Exception as e:
-            log_error(f"Removal failed: {e}")
-
-    def init_project(self):
-        """Initialise un nouveau projet zarch.json."""
-        if CONFIG_FILE.exists():
-            log_error("zarch.json already exists.")
-            
-        name = input("Package name: ")
-        version = input("Version (1.0.0): ") or "1.0.0"
-        desc = input("Description: ")
-        entry = input("Entry point (main.swf): ") or "main.swf"
-        
-        config = {
-            "name": name,
-            "version": version,
-            "description": desc,
-            "main": entry,
-            "dependencies": {}
-        }
-        
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=4)
-            
-        log_success("Initialized zarch.json")
-
+    # --- CMD: LINK ---
     def link_file(self, file_path, alias=None):
-        """Commande manuelle 'link' pour lier un fichier .swf local."""
         target = Path(file_path)
         if not target.exists():
-            log_error(f"File {file_path} does not exist.")
-            
+            log_error(f"File {file_path} not found.")
+        
         if not alias:
-            alias = target.stem 
-            
-        print(f"{Colors.CYAN}[LINK]{Colors.RESET} Linking {file_path} as '{alias}'...")
-        
-        # Mise à jour ou création du fichier de config local pour le mapping
+            alias = target.stem
+
+        log_step("LINK", f"Linking {file_path} as '{alias}'...")
+
         config = {}
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, 'r') as f:
-                try:
-                    config = json.load(f)
+        if Path(CONFIG_FILE_NAME).exists():
+            with open(CONFIG_FILE_NAME, 'r') as f:
+                try: config = json.load(f)
                 except: pass
-                
-        if "swift" not in config:
-            config["swift"] = {}
-            
-        config["swift"][file_path] = {"as": alias}
         
-        with open(CONFIG_FILE, 'w') as f:
+        if "swift" not in config: config["swift"] = {}
+        config["swift"][str(target)] = {"as": alias}
+
+        with open(CONFIG_FILE_NAME, 'w') as f:
             json.dump(config, f, indent=4)
             
-        log_success(f"Linked {file_path} as {alias}")
+        log_success(f"Link added to {CONFIG_FILE_NAME}")
 
-
-# --- Point d'entrée CLI ---
+# --- CLI Entry Point ---
 def main():
-    parser = argparse.ArgumentParser(description="Zarch Package Manager for SwiftFlow")
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    parser = argparse.ArgumentParser(prog="zarch", description="Zarch Package Manager v3.1")
+    subparsers = parser.add_subparsers(dest="command", help="Command")
 
-    # Install
-    install_parser = subparsers.add_parser("install", help="Install a package")
-    install_parser.add_argument("package", help="Package name (@scope/name or name)")
+    # LOGIN
+    parser_login = subparsers.add_parser("login", help="Authenticate with registry")
+    parser_login.add_argument("-name", dest="username", required=True, help="Username")
+    parser_login.add_argument("-password", dest="password", required=True, help="Password")
 
-    # Remove
-    remove_parser = subparsers.add_parser("remove", help="Remove a package")
-    remove_parser.add_argument("package", help="Package name")
+    # LOGOUT
+    parser_logout = subparsers.add_parser("logout", help="Clear credentials")
 
-    # Search
-    search_parser = subparsers.add_parser("search", help="Search for packages")
-    search_parser.add_argument("query", help="Search term")
+    # INIT
+    parser_init = subparsers.add_parser("init", help="Initialize new package")
+    parser_init.add_argument("name", nargs="?", help="Project name")
 
-    # Init
-    subparsers.add_parser("init", help="Initialize a new package")
+    # BUILD
+    parser_build = subparsers.add_parser("build", help="Build package for release")
 
-    # Link
-    link_parser = subparsers.add_parser("link", help="Link a local .swf file")
-    link_parser.add_argument("file", help="Path to .swf file")
-    link_parser.add_argument("--as", dest="alias", help="Alias for import")
+    # PUBLISH
+    parser_pub = subparsers.add_parser("publish", help="Publish package to registry")
+    parser_pub.add_argument("--linf", dest="file", help="Specific file pattern to upload")
+
+    # INSTALL
+    parser_inst = subparsers.add_parser("install", help="Install dependency")
+    parser_inst.add_argument("package", help="Package name")
+
+    # LINK
+    parser_link = subparsers.add_parser("link", help="Link local file")
+    parser_link.add_argument("file", help="Path to .swf file")
+    parser_link.add_argument("--as", dest="alias", help="Import alias")
+
+    # SEARCH
+    parser_search = subparsers.add_parser("search", help="Search packages")
+    parser_search.add_argument("query", help="Search term")
 
     args = parser.parse_args()
     manager = ZarchManager()
 
-    if args.command == "install":
-        manager.install(args.package)
-    elif args.command == "remove":
-        manager.remove(args.package)
-    elif args.command == "search":
-        manager.search(args.query)
+    if args.command == "login":
+        manager.login(args.username, args.password)
+    elif args.command == "logout":
+        manager.logout()
     elif args.command == "init":
-        manager.init_project()
+        manager.init_project(args.name)
+    elif args.command == "build":
+        manager.build_package()
+    elif args.command == "publish":
+        manager.publish_package(args.file)
+    elif args.command == "install":
+        manager.install(args.package)
     elif args.command == "link":
         manager.link_file(args.file, args.alias)
+    elif args.command == "search":
+        # Note: Implement search logic similar to install but with search endpoint
+        print(f"{Colors.BLUE}[INFO]{Colors.RESET} Search feature requires API implementation update.")
     else:
         parser.print_help()
 
@@ -334,5 +447,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n{Colors.YELLOW}[ABORT]{Colors.RESET} Operation cancelled by user.")
-        sys.exit(130)
+        print(f"\n{Colors.YELLOW}[ABORT]{Colors.RESET} Stopped by user.")
