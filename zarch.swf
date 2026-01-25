@@ -3,11 +3,6 @@
 //  (c) 2026 Gopu Inc.
 // ============================================================
 
-import "http";
-import "sys";
-import "io";
-import "json";
-
 // --- CONFIGURATION ---
 var REGISTRY_URL = "https://zenv-hub.onrender.com";
 var MODULES_DIR = "./zarch_modules";
