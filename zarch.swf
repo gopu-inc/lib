@@ -1,90 +1,182 @@
 #!/usr/bin/env swift
 
 // ============================================================
-//  ZARCH - SwiftFlow Package Manager v1.1
+//  ZARCH - SwiftFlow Package Manager v1.2
+//  (c) 2026 Gopu Inc.
 // ============================================================
 
 import "http";
 import "sys";
 import "io";
 import "json";
-import "std"; // Nouveau module standard
+import "std";
 
+// --- CONFIGURATION ---
 var REGISTRY_URL = "https://zenv-hub.onrender.com";
-var INSTALL_PATH = "/usr/local/bin"; // Path global
+var MODULES_DIR = "./zarch_modules";
+var INSTALL_PATH = "/usr/local/bin";
 
-// ... (Fonctions log_info, log_error, etc. identiques à avant) ...
-
-func log_info(msg) { print("\033[36m[INFO] \033[0m", msg); }
-func log_success(msg) { print("\033[32m[OK]   \033[0m", msg); }
-func log_error(msg) { print("\033[31m[FAIL] \033[0m", msg); sys.exit(1); }
+// --- COULEURS ANSI ---
+var C_RESET = "\033[0m";
+var C_BOLD = "\033[1m";
+var C_CYAN = "\033[36m";
+var C_GREEN = "\033[32m";
+var C_YELLOW = "\033[33m";
+var C_RED = "\033[31m";
 
 // ============================================================
-//  GESTION DES BINAIRES (LINK)
+//  FONCTIONS UTILITAIRES
+// ============================================================
+
+func log_info(msg) { print(C_CYAN, "[INFO] ", C_RESET, msg); }
+func log_success(msg) { print(C_GREEN, "[OK]   ", C_RESET, msg); }
+func log_warn(msg) { print(C_YELLOW, "[WARN] ", C_RESET, msg); }
+func log_error(msg) { print(C_RED, "[FAIL] ", C_RESET, msg); sys.exit(1); }
+
+// ============================================================
+//  LOGIQUE D'INSTALLATION (cmd: install)
+// ============================================================
+
+func install_package(pkg_name) {
+    // 1. Vérifier dossier modules
+    io.exists(MODULES_DIR, "has_mod");
+    if (has_mod == "no") { io.mkdir(MODULES_DIR); }
+
+    print(C_BOLD, "📦 Traitement du paquet : ", pkg_name, C_RESET);
+
+    // 2. Info API
+    var info_url = REGISTRY_URL + "/api/package/info/global/" + pkg_name;
+    var json_resp = http.get(info_url);
+    
+    if (json_resp == null) {
+        log_error("Paquet introuvable ou erreur réseau.");
+        return;
+    }
+
+    // 3. Parser
+    var dl_path = json.get(json_resp, "download_url");
+    var version = json.get(json_resp, "latest_version");
+
+    if (dl_path == null) { log_error("Données invalides."); return; }
+
+    print("   ℹ️  Version : ", version);
+
+    // 4. Download
+    var full_url = REGISTRY_URL + dl_path;
+    var target_file = MODULES_DIR + "/" + pkg_name + ".tar.gz";
+    var target_dir = MODULES_DIR + "/" + pkg_name;
+
+    print("⬇️  Téléchargement...");
+    var res = http.download(full_url, target_file);
+
+    if (res == "success") {
+        print(""); // Saut de ligne
+        
+        // 5. Extraction
+        io.exists(target_dir, "has_target");
+        if (has_target == "no") { io.mkdir(target_dir); }
+
+        var cmd_untar = "tar -xzf " + target_file + " -C " + target_dir;
+        sys.exec(cmd_untar);
+        sys.exec("rm " + target_file);
+
+        log_success("Installé : " + pkg_name);
+    } else {
+        log_error("Échec téléchargement.");
+    }
+}
+
+// ============================================================
+//  LOGIQUE DE LINK SYSTEME (cmd: link)
 // ============================================================
 
 func cmd_link_bin() {
-    // 1. Lire le zarch.json courant
-    if (io.exists("zarch.json", "has_conf"); has_conf == "no") {
-        log_error("Aucun fichier zarch.json trouvé.");
+    // 1. Vérifier zarch.json
+    io.exists("zarch.json", "has_conf");
+    
+    if (has_conf == "no") {
+        log_error("Aucun fichier zarch.json trouvé. Êtes-vous à la racine du projet ?");
         return;
     }
     
+    // 2. Lire config
     io.read("zarch.json", "content");
     
-    // 2. Chercher la configuration "bin" ou "link"
-    // Format attendu: "bin": { "mycmd": "src/main.swf" }
-    // Note: Notre parser JSON actuel est limité, on va supposer une clé simple "bin_entry"
-    // et "bin_alias" pour ce prototype, ou parser "main"
-    
     var entry = json.get(content, "main");
-    var alias = json.get(content, "alias"); // Nouvelle clé dans zarch.json
+    var alias = json.get(content, "alias");
     var name = json.get(content, "name");
     
     if (entry == null) {
-        log_error("Pas de point d'entrée 'main' défini dans zarch.json");
+        log_error("Pas de clé 'main' dans zarch.json");
         return;
     }
     
-    // Si pas d'alias, on utilise le nom du paquet
-    if (alias == null) alias = name;
+    // Si pas d'alias, on prend le nom du projet
+    if (alias == null) {
+        alias = name;
+    }
     
-    // 3. Préparer le fichier source
-    // Ajouter le shebang si absent (via sys.exec sed ou echo)
-    // Pour simplifier, on suppose que le dév l'a mis ou on chmod juste
-    
-    var abs_path_cmd = "pwd";
-    sys.exec(abs_path_cmd); // Affiche le path, faudrait le capturer
-    // Astuce: utiliser realpath sur l'entry
-    
+    if (alias == null) {
+        log_error("Impossible de déterminer le nom de l'alias (nom ou alias manquant)");
+        return;
+    }
+
     var source_file = "./" + entry;
     
-    // 4. Rendre exécutable
+    // 3. Rendre exécutable (+x)
     print("🔧  Permission d'exécution sur : ", source_file);
     var cmd_chmod = "chmod +x " + source_file;
     sys.exec(cmd_chmod);
     
-    // 5. Créer le lien système
-    // Attention: nécessite souvent sudo
+    // 4. Créer le lien symbolique système
+    // Utilise $(pwd) pour avoir le chemin absolu actuel
     var target_link = INSTALL_PATH + "/" + alias;
     
-    print("🔗  Création du lien : ", target_link, " -> ", source_file);
+    print("🔗  Lien système : ", target_link, " -> ", source_file);
     
-    // On utilise `ln -sf $(pwd)/fichier /usr/local/bin/alias`
-    // Note: pwd est nécessaire pour le lien absolu
+    // Note: On utilise le shell pour résoudre $(pwd)
     var cmd_link = "ln -sf $(pwd)/" + entry + " " + target_link;
-    
     var res = sys.exec(cmd_link);
     
     if (res == 0) {
-        log_success("Commande '" + alias + "' installée !");
-        print("    Essayez de taper : " + alias);
+        print("");
+        log_success("Commande '" + alias + "' installée avec succès !");
+        print(C_BOLD, "    Tapez simplement : ", alias, C_RESET);
     } else {
-        log_error("Impossible de créer le lien (Permission refusée ? Essayez sudo)");
+        log_error("Permission refusée. Essayez avec 'sudo'.");
     }
 }
 
-// ... (Fonctions install, init identiques à avant) ...
+// ============================================================
+//  LOGIQUE INIT (cmd: init)
+// ============================================================
+
+func do_init() {
+    io.exists("zarch.json", "has_conf");
+    if (has_conf == "yes") {
+        log_warn("Déjà initialisé.");
+        return;
+    }
+    
+    var name = weld("Nom du projet: ");
+    var entry = "main.swf";
+    
+    // Construction JSON manuelle
+    var c = "{\n";
+    c = c + '  "name": "' + name + '",\n';
+    c = c + '  "version": "1.0.0",\n';
+    c = c + '  "main": "' + entry + '",\n';
+    c = c + '  "alias": "' + name + '"\n';
+    c = c + "}";
+    
+    io.write("zarch.json", c);
+    
+    // Créer un main.swf par défaut
+    var code = '#!/usr/bin/env swift\n\nmain() {\n    print("Hello from ' + name + '!");\n}';
+    io.write(entry, code);
+    
+    log_success("Projet initialisé !");
+}
 
 // ============================================================
 //  MAIN
@@ -94,15 +186,20 @@ main() {
     var cmd = sys.argv(0);
     
     if (cmd == "link") {
-        // zarch link (utilise le zarch.json courant)
         cmd_link_bin();
     }
     else if (cmd == "install") {
         var pkg = sys.argv(1);
-        // ... code install ...
-        print("Install TODO (copier code précédent)");
+        if (pkg != null) {
+            install_package(pkg);
+        } else {
+            log_error("Nom du paquet manquant.");
+        }
+    }
+    else if (cmd == "init") {
+        do_init();
     }
     else {
-        print("Usage: zarch [install|link|init]");
+        print("Usage: zarch [init|install|link]");
     }
 }
