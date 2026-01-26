@@ -1,0 +1,1 @@
+@user/mon-super-module 1.0.0
