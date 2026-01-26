@@ -1,18 +1,20 @@
 #!/usr/bin/env swift
+
 // ============================================================
-//  ZARCH v2.0 (OOP Edition)
+//  ZARCH v2.0 (OOP Edition) - Corrected
 // ============================================================
 
 import "http"; import "sys"; import "io"; import "json"; import "std";
 
 // --- ENUMS ---
+// Note: Ajout des point-virgules ; car le parser l'exige actuellement
 enum Color { 
     RESET, CYAN, GREEN, YELLOW, RED, BOLD 
-}
+};
 
 enum Status {
     SUCCESS, ERROR, WARNING
-}
+};
 
 // --- CLASSE LOGGER ---
 class Logger {
@@ -32,10 +34,11 @@ class Logger {
 class Zarch {
     var registry = "https://zenv-hub.onrender.com";
     var modules_dir = "./zarch_modules";
+    // Création de l'instance Logger
     var log = new Logger();
 
     func install(pkg_name) {
-        // Vérif dossier
+        // Vérif dossier (io.exists retourne 1 ou 0)
         if (io.exists(this.modules_dir) == 0) {
             io.mkdir(this.modules_dir);
         }
@@ -83,11 +86,15 @@ class Zarch {
         var mf = dir + "/zarch.json";
         if (io.exists(mf) == 1) {
             var c = io.read(mf);
-            var main = json.get(c, "main");
-            if (main != null) {
-                var src = dir + "/" + main;
+            // CORRECTION ICI : renommage de 'main' en 'entry' car main est réservé
+            var entry = json.get(c, "main");
+            
+            if (entry != null) {
+                var src = dir + "/" + entry;
                 var lnk = pkg_name + ".swf";
+                // Lien symbolique local pour l'import facile
                 sys.exec("ln -sf " + src + " " + lnk);
+                print("   🔗 Alias local créé : ./", lnk);
             }
         }
     }
@@ -95,7 +102,7 @@ class Zarch {
 
 // --- MAIN ---
 main() {
-    // Instanciation de la classe
+    // Instanciation de la classe principale
     var app = new Zarch();
     var cmd = sys.argv(0);
 
@@ -107,10 +114,11 @@ main() {
             print("Erreur: Nom du paquet manquant");
         }
     }
-    elif (cmd == "help") {
+    else if (cmd == "help") {
         print("Usage: zarch install <pkg>");
     }
     else {
-        print("Commande inconnue (essayez 'install' ou 'help')");
+        // Par défaut on affiche l'aide si aucune commande reconnue
+        print("Usage: zarch [install|help]");
     }
 }
