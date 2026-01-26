@@ -4,13 +4,6 @@
 //  ZARCH - SwiftFlow Package Manager v1.2
 //  (c) 2026 Gopu Inc.
 // ============================================================
-
-import "http";
-import "sys";
-import "io";
-import "json";
-import "std";
-
 // --- CONFIGURATION ---
 var REGISTRY_URL = "https://zenv-hub.onrender.com";
 var MODULES_DIR = "./zarch_modules";
