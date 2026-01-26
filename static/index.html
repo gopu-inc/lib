@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zarch Package Registry - Ultimate Edition v3.3</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fas fa-cube"></i>
+                <span>ZARCH</span>
+                <span class="version">v3.3</span>
+            </div>
+            <div class="nav-links">
+                <a href="#home" class="nav-link active"><i class="fas fa-home"></i> Accueil</a>
+                <a href="#packages" class="nav-link"><i class="fas fa-box"></i> Packages</a>
+                <a href="#upload" class="nav-link"><i class="fas fa-upload"></i> Upload</a>
+                <a href="#docs" class="nav-link"><i class="fas fa-book"></i> Documentation</a>
+                <div class="auth-section">
+                    <button id="login-btn" class="btn btn-outline"><i class="fas fa-sign-in-alt"></i> Connexion</button>
+                    <button id="register-btn" class="btn btn-primary"><i class="fas fa-user-plus"></i> Inscription</button>
+                </div>
+            </div>
+            <button class="menu-toggle">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container">
+        <!-- Home Section -->
+        <section id="home" class="section active">
+            <div class="hero">
+                <div class="hero-content">
+                    <h1><span class="highlight">Zarch Package Registry</span><br>Ultimate Edition v3.3</h1>
+                    <p class="subtitle">Registre privé haute performance avec support SwiftFlow, batch resolve et gestion binaire avancée</p>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <i class="fas fa-box-open"></i>
+                            <h3 id="total-packages">0</h3>
+                            <p>Packages</p>
+                        </div>
+                        <div class="stat-card">
+                            <i class="fas fa-download"></i>
+                            <h3 id="total-downloads">0</h3>
+                            <p>Téléchargements</p>
+                        </div>
+                        <div class="stat-card">
+                            <i class="fas fa-bolt"></i>
+                            <h3>100%</h3>
+                            <p>Uptime</p>
+                        </div>
+                        <div class="stat-card">
+                            <i class="fas fa-shield-alt"></i>
+                            <h3>SSH</h3>
+                            <p>Sécurisé</p>
+                        </div>
+                    </div>
+                    
+                    <div class="hero-actions">
+                        <button class="btn btn-large btn-primary" onclick="showSection('packages')">
+                            <i class="fas fa-search"></i> Explorer les Packages
+                        </button>
+                        <button class="btn btn-large btn-secondary" onclick="showSection('upload')">
+                            <i class="fas fa-cloud-upload-alt"></i> Publier un Package
+                        </button>
+                    </div>
+                    
+                    <div class="features">
+                        <div class="feature">
+                            <i class="fas fa-rocket"></i>
+                            <h4>Ultra Rapide</h4>
+                            <p>Cache intelligent et batch resolve</p>
+                        </div>
+                        <div class="feature">
+                            <i class="fas fa-lock"></i>
+                            <h4>Sécurité AAA</h4>
+                            <p>Tokens JWT et validation SHA256</p>
+                        </div>
+                        <div class="feature">
+                            <i class="fas fa-code-branch"></i>
+                            <h4>GitHub Sync</h4>
+                            <p>Synchronisation automatique</p>
+                        </div>
+                        <div class="feature">
+                            <i class="fab fa-swift"></i>
+                            <h4>SwiftFlow Ready</h4>
+                            <p>Optimisé pour SwiftFlow</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="hero-illustration">
+                    <div class="code-window">
+                        <div class="window-header">
+                            <div class="window-dots">
+                                <span class="dot red"></span>
+                                <span class="dot yellow"></span>
+                                <span class="dot green"></span>
+                            </div>
+                            <span class="window-title">terminal</span>
+                        </div>
+                        <div class="window-content">
+                            <pre><code class="language-bash">$ zenv install @gopu/http
+
+📦 Résolution des dépendances...
+✅ @gopu/http v1.2.3
+✅ @utils/logger v2.1.0
+✅ @security/jwt v3.0.1
+
+🚀 Téléchargement...
+████████████████ 100%
+
+✨ Installation terminée</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Packages Section -->
+        <section id="packages" class="section">
+            <div class="section-header">
+                <h2><i class="fas fa-box"></i> Packages Disponibles</h2>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="Rechercher un package..." autocomplete="off">
+                    <i class="fas fa-search"></i>
+                </div>
+            </div>
+            
+            <div class="filters">
+                <div class="filter-tags">
+                    <span class="filter-tag active" data-scope="all">Tous</span>
+                    <span class="filter-tag" data-scope="@gopu">@gopu</span>
+                    <span class="filter-tag" data-scope="@utils">@utils</span>
+                    <span class="filter-tag" data-scope="@security">@security</span>
+                    <span class="filter-tag" data-scope="user">user</span>
+                </div>
+                <div class="sort-options">
+                    <select id="sort-select">
+                        <option value="updated">Récent</option>
+                        <option value="downloads">Populaire</option>
+                        <option value="name">Nom (A-Z)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="packages-grid" id="packages-grid">
+                <!-- Packages will be loaded here -->
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Chargement des packages...</p>
+                </div>
+            </div>
+            
+            <div class="pagination" id="pagination">
+                <!-- Pagination will be generated here -->
+            </div>
+        </section>
+
+        <!-- Package Details Modal -->
+        <div id="package-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modal-title"></h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="package-header">
+                        <div class="package-meta">
+                            <span class="package-version" id="modal-version"></span>
+                            <span class="package-author" id="modal-author"></span>
+                            <span class="package-downloads" id="modal-downloads"></span>
+                        </div>
+                        <div class="package-actions">
+                            <button class="btn btn-primary" id="modal-install">
+                                <i class="fas fa-download"></i> Installer
+                            </button>
+                            <button class="btn btn-secondary" id="modal-copy">
+                                <i class="fas fa-copy"></i> Copier
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="tabs">
+                        <button class="tab active" data-tab="readme">README</button>
+                        <button class="tab" data-tab="versions">Versions</button>
+                        <button class="tab" data-tab="dependencies">Dépendances</button>
+                    </div>
+                    
+                    <div class="tab-content">
+                        <div id="tab-readme" class="tab-pane active">
+                            <div class="readme-content markdown-body" id="modal-readme">
+                                Chargement...
+                            </div>
+                        </div>
+                        <div id="tab-versions" class="tab-pane">
+                            <ul class="version-list" id="modal-versions"></ul>
+                        </div>
+                        <div id="tab-dependencies" class="tab-pane">
+                            <div class="deps-content">
+                                <h4>Utilisation</h4>
+                                <div class="code-block">
+                                    <pre><code id="install-command">zarch add [package]</code></pre>
+                                    <button class="copy-btn"><i class="fas fa-copy"></i></button>
+                                </div>
+                                <h4>Résolution par lot (Batch)</h4>
+                                <div class="code-block">
+                                    <pre><code id="batch-command">POST /api/package/batch-resolve</code></pre>
+                                    <button class="copy-btn"><i class="fas fa-copy"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Section -->
+        <section id="upload" class="section">
+            <div class="section-header">
+                <h2><i class="fas fa-cloud-upload-alt"></i> Publier un Package</h2>
+                <p class="section-subtitle">Uploader un package .tar.gz avec support README automatique</p>
+            </div>
+            
+            <div class="upload-container">
+                <div class="upload-card">
+                    <div class="upload-area" id="drop-area">
+                        <i class="fas fa-file-archive fa-3x"></i>
+                        <h3>Glissez votre package ici</h3>
+                        <p>Format: .tar.gz contenant zarch.json</p>
+                        <input type="file" id="file-input" accept=".tar.gz,.tgz" hidden>
+                        <button class="btn btn-primary" id="browse-btn">
+                            <i class="fas fa-folder-open"></i> Parcourir
+                        </button>
+                    </div>
+                    
+                    <div class="upload-form">
+                        <div class="form-group">
+                            <label for="package-scope"><i class="fas fa-at"></i> Scope</label>
+                            <select id="package-scope" class="form-control">
+                                <option value="@gopu">@gopu</option>
+                                <option value="@utils">@utils</option>
+                                <option value="@security">@security</option>
+                                <option value="user">user (sans scope)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="package-name"><i class="fas fa-tag"></i> Nom du Package</label>
+                            <input type="text" id="package-name" class="form-control" placeholder="mon-package">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="package-version"><i class="fas fa-code-branch"></i> Version</label>
+                            <input type="text" id="package-version" class="form-control" placeholder="1.0.0">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="package-description"><i class="fas fa-align-left"></i> Description</label>
+                            <textarea id="package-description" class="form-control" rows="3" placeholder="Description du package..."></textarea>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-book"></i> README (optionnel)</label>
+                            <textarea id="package-readme" class="form-control" rows="5" placeholder="# Titre\n\nDescription détaillée..."></textarea>
+                            <small>Support Markdown. Laissé vide pour extraction auto depuis zarch.json</small>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button id="reset-btn" class="btn btn-outline">
+                                <i class="fas fa-redo"></i> Réinitialiser
+                            </button>
+                            <button id="upload-btn" class="btn btn-success" disabled>
+                                <i class="fas fa-upload"></i> Publier le Package
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="upload-progress" id="upload-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill"></div>
+                        </div>
+                        <div class="progress-text">Prêt pour l'upload</div>
+                    </div>
+                </div>
+                
+                <div class="upload-info">
+                    <h4><i class="fas fa-info-circle"></i> Instructions</h4>
+                    <ul class="info-list">
+                        <li><strong>Structure requise:</strong> Votre archive .tar.gz doit contenir un fichier <code>zarch.json</code></li>
+                        <li><strong>README automatique:</strong> Le champ <code>"markdown": []</code> dans zarch.json sera extrait</li>
+                        <li><strong>Validation SHA256:</strong> Une signature est automatiquement générée</li>
+                        <li><strong>Compatibilité:</strong> Optimisé pour SwiftFlow et Zenv</li>
+                    </ul>
+                    
+                    <div class="example-code">
+                        <h5>Exemple zarch.json</h5>
+                        <pre><code>{
+  "name": "@gopu/http",
+  "version": "1.2.3",
+  "description": "HTTP client",
+  "markdown": ["# HTTP Client", "Client HTTP avancé..."],
+  "dependencies": {
+    "@utils/logger": "^2.0.0"
+  }
+}</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Docs Section -->
+        <section id="docs" class="section">
+            <div class="section-header">
+                <h2><i class="fas fa-book"></i> Documentation</h2>
+            </div>
+            
+            <div class="docs-container">
+                <div class="docs-sidebar">
+                    <ul class="docs-menu">
+                        <li><a href="#docs-getting-started" class="doc-link active"><i class="fas fa-play-circle"></i> Démarrage</a></li>
+                        <li><a href="#docs-installation" class="doc-link"><i class="fas fa-download"></i> Installation</a></li>
+                        <li><a href="#docs-upload" class="doc-link"><i class="fas fa-upload"></i> Publication</a></li>
+                        <li><a href="#docs-batch" class="doc-link"><i class="fas fa-bolt"></i> Batch Resolve</a></li>
+                        <li><a href="#docs-api" class="doc-link"><i class="fas fa-code"></i> API Reference</a></li>
+                    </ul>
+                </div>
+                
+                <div class="docs-content">
+                    <div id="docs-getting-started" class="doc-section active">
+                        <h3><i class="fas fa-play-circle"></i> Démarrage Rapide</h3>
+                        <p>Zarch est un registre de packages privé haute performance avec support SwiftFlow.</p>
+                        
+                        <h4>Configuration client</h4>
+                        <div class="code-block">
+                            <pre><code># Créer un fichier .zenvrc
+echo '{
+  "registry": "https://votre-domaine.com",
+  "token": "votre_token_ici"
+}' > ~/.zenvrc</code></pre>
+                        </div>
+                        
+                        <h4>Installer un package</h4>
+                        <div class="code-block">
+                            <pre><code>zarch install @gopu/http
+# ou avec version spécifique
+zarch install @gopu/http@1.2.3</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div id="docs-installation" class="doc-section">
+                        <h3><i class="fas fa-download"></i> Installation</h3>
+                        <p>Guide d'installation du client Zarch.</p>
+                        
+                        <div class="code-block">
+                            <pre><code># Installation via curl
+curl -fsSL https://votre-domaine.com/install.sh | bash
+
+# Configuration
+zarch config set registry https://votre-domaine.com
+zarch login  # Sera guidé pour obtenir un token</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div id="docs-upload" class="doc-section">
+                        <h3><i class="fas fa-upload"></i> Publication de Packages</h3>
+                        <p>Créez un package compatible Zarch.</p>
+                        
+                        <div class="code-block">
+                            <pre><code># Structure minimale
+mon-package/
+├── src/
+│   └── index.js
+├── zarch.json
+└── README.md
+
+# Créer l'archive
+tar -czf mon-package.tar.gz mon-package/
+
+# Publier
+zarch publish mon-package.tar.gz</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div id="docs-batch" class="doc-section">
+                        <h3><i class="fas fa-bolt"></i> Batch Resolve</h3>
+                        <p>Optimisation pour résoudre plusieurs dépendances en une seule requête.</p>
+                        
+                        <div class="code-block">
+                            <pre><code>POST /api/package/batch-resolve
+Content-Type: application/json
+
+{
+  "dependencies": {
+    "@gopu/http": "1.0.0",
+    "@utils/logger": "latest",
+    "moment": "^2.29.0"
+  }
+}</code></pre>
+                        </div>
+                        
+                        <p>Réponse :</p>
+                        <div class="code-block">
+                            <pre><code>{
+  "resolved": {
+    "@gopu/http": {
+      "version": "1.0.0",
+      "url": "...",
+      "sha256": "..."
+    }
+  }
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <div id="docs-api" class="doc-section">
+                        <h3><i class="fas fa-code"></i> API Reference</h3>
+                        
+                        <div class="api-endpoint">
+                            <h4><span class="method get">GET</span> <code>/api/package/search?q=query</code></h4>
+                            <p>Recherche de packages.</p>
+                        </div>
+                        
+                        <div class="api-endpoint">
+                            <h4><span class="method post">POST</span> <code>/api/auth/login</code></h4>
+                            <p>Authentification.</p>
+                        </div>
+                        
+                        <div class="api-endpoint">
+                            <h4><span class="method post">POST</span> <code>/api/package/upload/{scope}/{name}</code></h4>
+                            <p>Upload d'un package (token requis).</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Login/Register Modals -->
+        <div id="auth-modal" class="modal auth-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="auth-title">Connexion</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="auth-tabs">
+                        <button class="auth-tab active" data-auth="login">Connexion</button>
+                        <button class="auth-tab" data-auth="register">Inscription</button>
+                    </div>
+                    
+                    <form id="login-form" class="auth-form active">
+                        <div class="form-group">
+                            <label for="login-username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
+                            <input type="text" id="login-username" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password"><i class="fas fa-lock"></i> Mot de passe</label>
+                            <input type="password" id="login-password" class="form-control" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">
+                            <i class="fas fa-sign-in-alt"></i> Se connecter
+                        </button>
+                    </form>
+                    
+                    <form id="register-form" class="auth-form">
+                        <div class="form-group">
+                            <label for="register-username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
+                            <input type="text" id="register-username" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-email"><i class="fas fa-envelope"></i> Email (optionnel)</label>
+                            <input type="email" id="register-email" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password"><i class="fas fa-lock"></i> Mot de passe</label>
+                            <input type="password" id="register-password" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-confirm"><i class="fas fa-lock"></i> Confirmer le mot de passe</label>
+                            <input type="password" id="register-confirm" class="form-control" required>
+                        </div>
+                        <button type="submit" class="btn btn-success btn-block">
+                            <i class="fas fa-user-plus"></i> Créer un compte
+                        </button>
+                    </form>
+                    
+                    <div class="auth-status" id="auth-status"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-brand">
+                <i class="fas fa-cube"></i>
+                <span>Zarch Registry v3.3</span>
+            </div>
+            <div class="footer-links">
+                <a href="#"><i class="fab fa-github"></i> GitHub</a>
+                <a href="#"><i class="fas fa-book"></i> Docs</a>
+                <a href="#"><i class="fas fa-shield-alt"></i> Sécurité</a>
+                <a href="#"><i class="fas fa-envelope"></i> Contact</a>
+            </div>
+            <div class="footer-copyright">
+                © 2024 Zarch Ultimate Edition. Tous droits réservés.
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
