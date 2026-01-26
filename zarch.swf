@@ -1,160 +1,142 @@
 #!/usr/bin/env swift
-
 // ============================================================
-//  ZARCH - SwiftFlow Package Manager v1.2
+//  ZARCH - SwiftFlow Package Manager v1.4
 //  (c) 2026 Gopu Inc.
 // ============================================================
-// --- CONFIGURATION ---
+
+// CONFIGURATION
 var REGISTRY_URL = "https://zenv-hub.onrender.com";
 var MODULES_DIR = "./zarch_modules";
 var INSTALL_PATH = "/usr/local/bin";
 
-// --- COULEURS ANSI ---
+// COULEURS
 var C_RESET = "\033[0m";
-var C_BOLD = "\033[1m";
 var C_CYAN = "\033[36m";
 var C_GREEN = "\033[32m";
-var C_YELLOW = "\033[33m";
 var C_RED = "\033[31m";
+var C_BOLD = "\033[1m";
 
-// ============================================================
-//  FONCTIONS UTILITAIRES
-// ============================================================
-
+// UTILITAIRES
 func log_info(msg) { print(C_CYAN, "[INFO] ", C_RESET, msg); }
 func log_success(msg) { print(C_GREEN, "[OK]   ", C_RESET, msg); }
-func log_warn(msg) { print(C_YELLOW, "[WARN] ", C_RESET, msg); }
 func log_error(msg) { print(C_RED, "[FAIL] ", C_RESET, msg); sys.exit(1); }
 
 // ============================================================
-//  LOGIQUE D'INSTALLATION (cmd: install)
+//  INSTALLATION
 // ============================================================
 
 func install_package(pkg_name) {
-    // 1. Vérifier dossier modules
-    io.exists(MODULES_DIR, "has_mod");
-    if (has_mod == "no") { io.mkdir(MODULES_DIR); }
+    // Nouvelle syntaxe : io.exists retourne 1 (vrai) ou 0 (faux)
+    if (io.exists(MODULES_DIR) == 0) {
+        io.mkdir(MODULES_DIR);
+    }
 
-    print(C_BOLD, "📦 Traitement du paquet : ", pkg_name, C_RESET);
+    print(C_BOLD, "📦 Package : ", pkg_name, C_RESET);
 
-    // 2. Info API
     var info_url = REGISTRY_URL + "/api/package/info/global/" + pkg_name;
     var json_resp = http.get(info_url);
     
-    if (json_resp == null) {
-        log_error("Paquet introuvable ou erreur réseau.");
-        return;
-    }
+    if (json_resp == null) { log_error("Paquet introuvable."); return; }
 
-    // 3. Parser
     var dl_path = json.get(json_resp, "download_url");
     var version = json.get(json_resp, "latest_version");
-
-    if (dl_path == null) { log_error("Données invalides."); return; }
+    
+    if (dl_path == null) { log_error("URL invalide."); return; }
 
     print("   ℹ️  Version : ", version);
 
-    // 4. Download
+    // Téléchargement
     var full_url = REGISTRY_URL + dl_path;
     var target_file = MODULES_DIR + "/" + pkg_name + ".tar.gz";
     var target_dir = MODULES_DIR + "/" + pkg_name;
 
-    print("⬇️  Téléchargement...");
+    print("⬇️  Downloading...");
     var res = http.download(full_url, target_file);
 
     if (res == "success") {
-        print(""); // Saut de ligne
-        
-        // 5. Extraction
-        io.exists(target_dir, "has_target");
-        if (has_target == "no") { io.mkdir(target_dir); }
+        if (io.exists(target_dir) == 0) { io.mkdir(target_dir); }
 
+        // Extraction
         var cmd_untar = "tar -xzf " + target_file + " -C " + target_dir;
         sys.exec(cmd_untar);
         sys.exec("rm " + target_file);
+        
+        // Vérification lien
+        check_entrypoint(target_dir, pkg_name);
 
         log_success("Installé : " + pkg_name);
     } else {
-        log_error("Échec téléchargement.");
+        log_error("Erreur téléchargement.");
+    }
+}
+
+func check_entrypoint(dir, pkg_name) {
+    var manifest_path = dir + "/zarch.json";
+    
+    if (io.exists(manifest_path) == 1) {
+        // Nouvelle syntaxe : io.read retourne le contenu
+        var content = io.read(manifest_path);
+        var main_file = json.get(content, "main");
+        
+        if (main_file != null) {
+            var source = dir + "/" + main_file;
+            var link_name = pkg_name + ".swf";
+            sys.exec("ln -sf " + source + " " + link_name);
+            print("   🔗 Alias : ./", link_name);
+        }
     }
 }
 
 // ============================================================
-//  LOGIQUE DE LINK SYSTEME (cmd: link)
+//  LINK (Création d'exécutable système)
 // ============================================================
 
 func cmd_link_bin() {
-    // 1. Vérifier zarch.json
-    io.exists("zarch.json", "has_conf");
-    
-    if (has_conf == "no") {
-        log_error("Aucun fichier zarch.json trouvé. Êtes-vous à la racine du projet ?");
+    if (io.exists("zarch.json") == 0) {
+        log_error("Pas de zarch.json ici.");
         return;
     }
     
-    // 2. Lire config
-    io.read("zarch.json", "content");
+    // Lecture directe dans la variable
+    var content = io.read("zarch.json");
     
     var entry = json.get(content, "main");
     var alias = json.get(content, "alias");
     var name = json.get(content, "name");
     
-    if (entry == null) {
-        log_error("Pas de clé 'main' dans zarch.json");
-        return;
-    }
-    
-    // Si pas d'alias, on prend le nom du projet
-    if (alias == null) {
-        alias = name;
-    }
-    
-    if (alias == null) {
-        log_error("Impossible de déterminer le nom de l'alias (nom ou alias manquant)");
-        return;
-    }
+    if (alias == null) alias = name;
+    if (entry == null) { log_error("Config invalide (manque 'main')"); return; }
 
     var source_file = "./" + entry;
     
-    // 3. Rendre exécutable (+x)
-    print("🔧  Permission d'exécution sur : ", source_file);
-    var cmd_chmod = "chmod +x " + source_file;
-    sys.exec(cmd_chmod);
+    print("🔧 Permission +x sur ", source_file);
+    sys.exec("chmod +x " + source_file);
     
-    // 4. Créer le lien symbolique système
-    // Utilise $(pwd) pour avoir le chemin absolu actuel
     var target_link = INSTALL_PATH + "/" + alias;
-    
-    print("🔗  Lien système : ", target_link, " -> ", source_file);
-    
-    // Note: On utilise le shell pour résoudre $(pwd)
     var cmd_link = "ln -sf $(pwd)/" + entry + " " + target_link;
+    
     var res = sys.exec(cmd_link);
     
     if (res == 0) {
-        print("");
-        log_success("Commande '" + alias + "' installée avec succès !");
-        print(C_BOLD, "    Tapez simplement : ", alias, C_RESET);
+        log_success("Commande '" + alias + "' installée dans le système !");
     } else {
-        log_error("Permission refusée. Essayez avec 'sudo'.");
+        log_error("Erreur création lien (Essayez sudo).");
     }
 }
 
 // ============================================================
-//  LOGIQUE INIT (cmd: init)
+//  INIT
 // ============================================================
 
 func do_init() {
-    io.exists("zarch.json", "has_conf");
-    if (has_conf == "yes") {
-        log_warn("Déjà initialisé.");
+    if (io.exists("zarch.json") == 1) {
+        print("Projet déjà initialisé.");
         return;
     }
     
     var name = weld("Nom du projet: ");
     var entry = "main.swf";
     
-    // Construction JSON manuelle
     var c = "{\n";
     c = c + '  "name": "' + name + '",\n';
     c = c + '  "version": "1.0.0",\n';
@@ -164,11 +146,11 @@ func do_init() {
     
     io.write("zarch.json", c);
     
-    // Créer un main.swf par défaut
-    var code = '#!/usr/bin/env swift\n\nmain() {\n    print("Hello from ' + name + '!");\n}';
+    // Création du main avec shebang
+    var code = '#!/usr/bin/env swift\n\nmain() {\n    print("Hello ' + name + '!");\n}';
     io.write(entry, code);
     
-    log_success("Projet initialisé !");
+    log_success("Projet créé avec succès.");
 }
 
 // ============================================================
@@ -178,16 +160,13 @@ func do_init() {
 main() {
     var cmd = sys.argv(0);
     
-    if (cmd == "link") {
-        cmd_link_bin();
-    }
-    else if (cmd == "install") {
+    if (cmd == "install") {
         var pkg = sys.argv(1);
-        if (pkg != null) {
-            install_package(pkg);
-        } else {
-            log_error("Nom du paquet manquant.");
-        }
+        if (pkg != null) install_package(pkg);
+        else log_error("Nom du paquet manquant.");
+    }
+    else if (cmd == "link") {
+        cmd_link_bin();
     }
     else if (cmd == "init") {
         do_init();
