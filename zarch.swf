@@ -1,177 +1,116 @@
 #!/usr/bin/env swift
 // ============================================================
-//  ZARCH - SwiftFlow Package Manager v1.4
-//  (c) 2026 Gopu Inc.
+//  ZARCH v2.0 (OOP Edition)
 // ============================================================
 
-// CONFIGURATION
-var REGISTRY_URL = "https://zenv-hub.onrender.com";
-var MODULES_DIR = "./zarch_modules";
-var INSTALL_PATH = "/usr/local/bin";
+import "http"; import "sys"; import "io"; import "json"; import "std";
 
-// COULEURS
-var C_RESET = "\033[0m";
-var C_CYAN = "\033[36m";
-var C_GREEN = "\033[32m";
-var C_RED = "\033[31m";
-var C_BOLD = "\033[1m";
+// --- ENUMS ---
+enum Color { 
+    RESET, CYAN, GREEN, YELLOW, RED, BOLD 
+}
 
-// UTILITAIRES
-func log_info(msg) { print(C_CYAN, "[INFO] ", C_RESET, msg); }
-func log_success(msg) { print(C_GREEN, "[OK]   ", C_RESET, msg); }
-func log_error(msg) { print(C_RED, "[FAIL] ", C_RESET, msg); sys.exit(1); }
+enum Status {
+    SUCCESS, ERROR, WARNING
+}
 
-// ============================================================
-//  INSTALLATION
-// ============================================================
-
-func install_package(pkg_name) {
-    // Nouvelle syntaxe : io.exists retourne 1 (vrai) ou 0 (faux)
-    if (io.exists(MODULES_DIR) == 0) {
-        io.mkdir(MODULES_DIR);
+// --- CLASSE LOGGER ---
+class Logger {
+    func info(msg) {
+        print("\033[36m[INFO] \033[0m", msg);
     }
-
-    print(C_BOLD, "📦 Package : ", pkg_name, C_RESET);
-
-    var info_url = REGISTRY_URL + "/api/package/info/global/" + pkg_name;
-    var json_resp = http.get(info_url);
-    
-    if (json_resp == null) { log_error("Paquet introuvable."); return; }
-
-    var dl_path = json.get(json_resp, "download_url");
-    var version = json.get(json_resp, "latest_version");
-    
-    if (dl_path == null) { log_error("URL invalide."); return; }
-
-    print("   ℹ️  Version : ", version);
-
-    // Téléchargement
-    var full_url = REGISTRY_URL + dl_path;
-    var target_file = MODULES_DIR + "/" + pkg_name + ".tar.gz";
-    var target_dir = MODULES_DIR + "/" + pkg_name;
-
-    print("⬇️  Downloading...");
-    var res = http.download(full_url, target_file);
-
-    if (res == "success") {
-        if (io.exists(target_dir) == 0) { io.mkdir(target_dir); }
-
-        // Extraction
-        var cmd_untar = "tar -xzf " + target_file + " -C " + target_dir;
-        sys.exec(cmd_untar);
-        sys.exec("rm " + target_file);
-        
-        // Vérification lien
-        check_entrypoint(target_dir, pkg_name);
-
-        log_success("Installé : " + pkg_name);
-    } else {
-        log_error("Erreur téléchargement.");
+    func success(msg) {
+        print("\033[32m[OK]   \033[0m", msg);
+    }
+    func error(msg) {
+        print("\033[31m[FAIL] \033[0m", msg);
+        sys.exit(1);
     }
 }
 
-func check_entrypoint(dir, pkg_name) {
-    var manifest_path = dir + "/zarch.json";
-    
-    if (io.exists(manifest_path) == 1) {
-        // Nouvelle syntaxe : io.read retourne le contenu
-        var content = io.read(manifest_path);
-        var main_file = json.get(content, "main");
-        
-        if (main_file != null) {
-            var source = dir + "/" + main_file;
-            var link_name = pkg_name + ".swf";
-            sys.exec("ln -sf " + source + " " + link_name);
-            print("   🔗 Alias : ./", link_name);
+// --- CLASSE PACKAGE MANAGER ---
+class Zarch {
+    var registry = "https://zenv-hub.onrender.com";
+    var modules_dir = "./zarch_modules";
+    var log = new Logger();
+
+    func install(pkg_name) {
+        // Vérif dossier
+        if (io.exists(this.modules_dir) == 0) {
+            io.mkdir(this.modules_dir);
+        }
+
+        print("📦 Package : ", pkg_name);
+
+        // API Call
+        var url = this.registry + "/api/package/info/global/" + pkg_name;
+        var json_resp = http.get(url);
+
+        if (json_resp == null) { 
+            this.log.error("Package introuvable."); 
+            return;
+        }
+
+        var dl_path = json.get(json_resp, "download_url");
+        var version = json.get(json_resp, "latest_version");
+
+        if (dl_path == null) { this.log.error("URL invalide."); return; }
+
+        this.log.info("Version trouvée : " + version);
+
+        // Download
+        var full_url = this.registry + dl_path;
+        var target_file = this.modules_dir + "/" + pkg_name + ".tar.gz";
+        var target_dir = this.modules_dir + "/" + pkg_name;
+
+        var res = http.download(full_url, target_file);
+
+        if (res == "success") {
+            if (io.exists(target_dir) == 0) io.mkdir(target_dir);
+            
+            var cmd = "tar -xzf " + target_file + " -C " + target_dir;
+            sys.exec(cmd);
+            sys.exec("rm " + target_file);
+            
+            this.link_alias(target_dir, pkg_name);
+            this.log.success("Installé : " + pkg_name);
+        } else {
+            this.log.error("Erreur téléchargement.");
+        }
+    }
+
+    func link_alias(dir, pkg_name) {
+        var mf = dir + "/zarch.json";
+        if (io.exists(mf) == 1) {
+            var c = io.read(mf);
+            var main = json.get(c, "main");
+            if (main != null) {
+                var src = dir + "/" + main;
+                var lnk = pkg_name + ".swf";
+                sys.exec("ln -sf " + src + " " + lnk);
+            }
         }
     }
 }
 
-// ============================================================
-//  LINK (Création d'exécutable système)
-// ============================================================
-
-func cmd_link_bin() {
-    if (io.exists("zarch.json") == 0) {
-        log_error("Pas de zarch.json ici.");
-        return;
-    }
-    
-    // Lecture directe dans la variable
-    var content = io.read("zarch.json");
-    
-    var entry = json.get(content, "main");
-    var alias = json.get(content, "alias");
-    var name = json.get(content, "name");
-    
-    if (alias == null) alias = name;
-    if (entry == null) { log_error("Config invalide (manque 'main')"); return; }
-
-    var source_file = "./" + entry;
-    
-    print("🔧 Permission +x sur ", source_file);
-    sys.exec("chmod +x " + source_file);
-    
-    var target_link = INSTALL_PATH + "/" + alias;
-    var cmd_link = "ln -sf $(pwd)/" + entry + " " + target_link;
-    
-    var res = sys.exec(cmd_link);
-    
-    if (res == 0) {
-        log_success("Commande '" + alias + "' installée dans le système !");
-    } else {
-        log_error("Erreur création lien (Essayez sudo).");
-    }
-}
-
-// ============================================================
-//  INIT
-// ============================================================
-
-func do_init() {
-    if (io.exists("zarch.json") == 1) {
-        print("Projet déjà initialisé.");
-        return;
-    }
-    
-    var name = weld("Nom du projet: ");
-    var entry = "main.swf";
-    
-    var c = "{\n";
-    c = c + '  "name": "' + name + '",\n';
-    c = c + '  "version": "1.0.0",\n';
-    c = c + '  "main": "' + entry + '",\n';
-    c = c + '  "alias": "' + name + '"\n';
-    c = c + "}";
-    
-    io.write("zarch.json", c);
-    
-    // Création du main avec shebang
-    var code = '#!/usr/bin/env swift\n\nmain() {\n    print("Hello ' + name + '!");\n}';
-    io.write(entry, code);
-    
-    log_success("Projet créé avec succès.");
-}
-
-// ============================================================
-//  MAIN
-// ============================================================
-
+// --- MAIN ---
 main() {
+    // Instanciation de la classe
+    var app = new Zarch();
     var cmd = sys.argv(0);
-    
+
     if (cmd == "install") {
         var pkg = sys.argv(1);
-        if (pkg != null) install_package(pkg);
-        else log_error("Nom du paquet manquant.");
+        if (pkg != null) {
+            app.install(pkg);
+        } else {
+            print("Erreur: Nom du paquet manquant");
+        }
     }
-    else if (cmd == "link") {
-        cmd_link_bin();
-    }
-    else if (cmd == "init") {
-        do_init();
+    elif (cmd == "help") {
+        print("Usage: zarch install <pkg>");
     }
     else {
-        print("Usage: zarch [init|install|link]");
+        print("Commande inconnue (essayez 'install' ou 'help')");
     }
 }
