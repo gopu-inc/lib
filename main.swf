@@ -1,0 +1,5 @@
+#!/usr/bin/env swift
+
+main() {
+    print("🚀 SuperTool v1.0 running!");
+}
