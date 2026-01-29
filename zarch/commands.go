@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"mime/multipart"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
